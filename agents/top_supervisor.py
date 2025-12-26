@@ -211,7 +211,8 @@ async def main() -> None:
             agent, checkpointer = create_top_supervisor(checkpointer)
             
             # 创建配置，包含唯一的 thread_id 用于状态持久化
-            thread_id = "1226_001_fxl"
+            # 可以将thread_id硬编码，用来测试长期记忆，长期记忆必须要求是相同的thread_id
+            thread_id = str(uuid.uuid4())
             config = {"configurable": {"thread_id": thread_id}}
             
             print("=" * 60)
