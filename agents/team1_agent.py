@@ -18,6 +18,7 @@ Team1 Agent 管理两个子代理：乘法代理和除法代理。
     - 复用已有的 deep_agent_multiplication 和 deep_agent_division 实现
 """
 
+import asyncio
 import os
 import uuid
 
@@ -156,10 +157,10 @@ def handle_human_review(result: dict, config: dict, agent) -> dict:
         print("✓ 默认批准工具调用")
     
     # 使用相同的 config 恢复执行
-    result = agent.invoke(
+    result = asyncio.run(agent.ainvoke(
         Command(resume={"decisions": decisions}),
         config=config
-    )
+    ))
     
     return result
 
@@ -187,9 +188,9 @@ def main() -> None:
         print("测试 1: 乘法运算")
         print("="*50)
         print("发送请求: Calculate 8 * 9")
-        result = agent.invoke({
+        result = asyncio.run(agent.ainvoke({
             "messages": [{"role": "user", "content": "Calculate 8 * 9"}]
-        }, config=config)
+        }, config=config))
         
         # 检查是否触发中断（需要人工审核）
         if result.get("__interrupt__"):
@@ -207,9 +208,9 @@ def main() -> None:
         print("="*50)
         config2 = {"configurable": {"thread_id": str(uuid.uuid4())}}
         print("发送请求: Calculate 100 / 5")
-        result2 = agent.invoke({
+        result2 = asyncio.run(agent.ainvoke({
             "messages": [{"role": "user", "content": "Calculate 100 / 5"}]
-        }, config=config2)
+        }, config=config2))
         
         # 检查是否触发中断（需要人工审核）
         if result2.get("__interrupt__"):

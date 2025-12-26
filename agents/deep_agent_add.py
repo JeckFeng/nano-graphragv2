@@ -18,6 +18,7 @@ Deep Agent 加法工具示例
     - 工具调用需要人工审核批准
 """
 
+import asyncio
 import os
 import uuid
 from typing import Literal
@@ -144,10 +145,10 @@ def handle_human_review(result: dict, config: dict, agent) -> dict:
         print("✓ 默认批准工具调用")
     
     # 使用相同的 config 恢复执行
-    result = agent.invoke(
+    result = asyncio.run(agent.ainvoke(
         Command(resume={"decisions": decisions}),
         config=config
-    )
+    ))
     
     return result
 
@@ -195,9 +196,9 @@ def main() -> None:
                 continue
             
             # 发送用户请求
-            result = agent.invoke({
+            result = asyncio.run(agent.ainvoke({
                 "messages": [{"role": "user", "content": user_input}]
-            }, config=config)
+            }, config=config))
             
             # 检查是否触发中断（需要人工审核）
             if result.get("__interrupt__"):

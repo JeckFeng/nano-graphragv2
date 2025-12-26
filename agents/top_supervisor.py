@@ -12,12 +12,13 @@ Top Supervisor 管理两个团队代理：Team1 和 Team2。
 
 设计约束:
     - 必须配置 DASHSCOPE_API_KEY 环境变量
-    - 使用 MemorySaver 作为 checkpointer 以支持状态持久化
+    - 使用 AsyncPostgresSaver 作为 checkpointer 以支持状态持久化
     - 子代理的工具调用需要人工审核批准
     - Top Supervisor 本身不使用工具，只负责任务分发
     - 复用已有的 team1_agent 和 team2_agent 实现
 """
 
+import asyncio
 import os
 import uuid
 
@@ -25,10 +26,10 @@ from deepagents import create_deep_agent, CompiledSubAgent
 from deepagents.backends import CompositeBackend, StateBackend, StoreBackend
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.store.memory import InMemoryStore
 from langgraph.types import Command
-
+from deepagents.backends import FilesystemBackend
 # 导入已有的团队代理实现
 from agents.team1_agent import create_team1_agent
 from agents.team2_agent import create_team2_agent
@@ -36,8 +37,10 @@ from agents.team2_agent import create_team2_agent
 # 加载环境变量
 load_dotenv()
 
+DB_URI = "postgresql://postgres:postgres@localhost:5432/langgraph_memory"
 
-def create_top_supervisor() -> tuple:
+
+def create_top_supervisor(checkpointer) -> tuple:
     """
     创建 Top Supervisor（总经理代理）
     
@@ -65,14 +68,11 @@ def create_top_supervisor() -> tuple:
         openai_api_key=api_key
     )
     
-    # 创建内存检查点保存器（Human-in-the-loop 必需）
-    checkpointer = MemorySaver()
-    
     # 配置混合存储后端（官方示例写法）
     composite_backend = lambda rt: CompositeBackend(
         default=StateBackend(rt),
         routes={
-            "/memories/": StoreBackend(rt),
+            "/memories/": FilesystemBackend(root_dir="./fs",virtual_mode=True),
         }
     )
     
@@ -127,7 +127,7 @@ def create_top_supervisor() -> tuple:
     return agent, checkpointer
 
 
-def handle_human_review(result: dict, config: dict, agent) -> dict:
+async def handle_human_review(result: dict, config: dict, agent) -> dict:
     """
     处理人工审核流程
     
@@ -185,7 +185,7 @@ def handle_human_review(result: dict, config: dict, agent) -> dict:
             resume_map[interrupt_obj.id] = {"decisions":[decision]}
     print("resume_map is : ",resume_map)
     # 恢复中断
-    result = agent.invoke(
+    result = await agent.ainvoke(
         Command(resume=resume_map),
         config=config
     )
@@ -193,7 +193,7 @@ def handle_human_review(result: dict, config: dict, agent) -> dict:
     return result
 
 
-def main() -> None:
+async def main() -> None:
     """
     主函数：演示 Top Supervisor 的多轮对话功能
     
@@ -205,47 +205,49 @@ def main() -> None:
         5. 显示结果并继续下一轮对话
     """
     try:
-        # 创建总经理代理
-        agent, checkpointer = create_top_supervisor()
-        
-        # 创建配置，包含唯一的 thread_id 用于状态持久化
-        thread_id = str(uuid.uuid4())
-        config = {"configurable": {"thread_id": thread_id}}
-        
-        print("=" * 60)
-        print("Top Supervisor - 总经理代理（带记忆功能）")
-        print("=" * 60)
-        print(f"Thread ID: {thread_id}")
-        print("\n功能说明：")
-        print("- 短期记忆：/workspace/ 下的文件仅在当前对话有效")
-        print("- 长期记忆：/memories/ 下的文件跨对话持久化")
-        print("- 输入 'quit' 或 'exit' 退出")
-        print("=" * 60)
-        
-        # 多轮对话循环
-        while True:
-            # 获取用户输入
-            user_input = input("\n你: ").strip()
+        async with AsyncPostgresSaver.from_conn_string(DB_URI) as checkpointer:
+            await checkpointer.setup()
+            # 创建总经理代理
+            agent, checkpointer = create_top_supervisor(checkpointer)
             
-            # 退出条件
-            if user_input.lower() in ["quit", "exit", "退出"]:
-                print("\n再见！")
-                break
+            # 创建配置，包含唯一的 thread_id 用于状态持久化
+            thread_id = "1226_001_fxl"
+            config = {"configurable": {"thread_id": thread_id}}
             
-            if not user_input:
-                continue
+            print("=" * 60)
+            print("Top Supervisor - 总经理代理（带记忆功能）")
+            print("=" * 60)
+            print(f"Thread ID: {thread_id}")
+            print("\n功能说明：")
+            print("- 短期记忆：/workspace/ 下的文件仅在当前对话有效")
+            print("- 长期记忆：/memories/ 下的文件跨对话持久化")
+            print("- 输入 'quit' 或 'exit' 退出")
+            print("=" * 60)
             
-            # 发送用户请求
-            result = agent.invoke({
-                "messages": [{"role": "user", "content": user_input}]
-            }, config=config)
-            
-            # 处理可能的多次中断
-            while result.get("__interrupt__"):
-                result = handle_human_review(result, config, agent)
-            
-            # 显示助手回复
-            print(f"\n助手: {result['messages'][-1].content}")
+            # 多轮对话循环
+            while True:
+                # 获取用户输入
+                user_input = input("\n你: ").strip()
+                
+                # 退出条件
+                if user_input.lower() in ["quit", "exit", "退出"]:
+                    print("\n再见！")
+                    break
+                
+                if not user_input:
+                    continue
+                
+                # 发送用户请求
+                result = await agent.ainvoke({
+                    "messages": [{"role": "user", "content": user_input}]
+                }, config=config)
+                
+                # 处理可能的多次中断
+                while result.get("__interrupt__"):
+                    result = await handle_human_review(result, config, agent)
+                
+                # 显示助手回复
+                print(f"\n助手: {result['messages'][-1].content}")
         
     except ValueError as e:
         print(f"配置错误: {e}")
@@ -256,7 +258,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
-
-
-
+    asyncio.run(main())
