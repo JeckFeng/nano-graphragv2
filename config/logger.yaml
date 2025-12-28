@@ -1,0 +1,39 @@
+# =============================================================================
+# 分层日志系统配置文件
+# =============================================================================
+# 配置各层级日志器的参数，包括日志等级、记录格式、持久化路径等
+# =============================================================================
+
+# 全局配置
+global:
+  log_dir: "Logs"
+  default_format: "json"  # json | text
+  default_level: "DEBUG"
+  enable_console: true
+  enable_file: true
+  file_mode: "append"  # append | overwrite
+  max_file_size_mb: 100
+  backup_count: 10
+  async_write: true
+  buffer_size: 1000  # 异步缓冲区大小
+
+
+# Tool 日志配置
+tool:
+  enabled: true
+  level: "DEBUG"  # 工具日志通常需要更详细
+  format: "json"
+  log_dir: "Logs/tool_logs"
+  file_pattern: "tool_{tool_name}_{date}.log"
+  file_mode: "append"
+  enable_console: false  # 工具日志通常不输出到控制台
+  enable_file: true
+  fields:
+    - thread_id
+    - agent_name
+    - tool_name
+    - input_params
+    - output_result
+    - is_success
+    - duration
+    - timestamp

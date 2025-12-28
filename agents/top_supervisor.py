@@ -34,6 +34,7 @@ from agents.team1_agent import create_team1_agent
 from agents.team2_agent import create_team2_agent
 # 导入 LLM 工厂
 from core import LLMFactory, load_llm_config
+from core.tool_context import wrap_runnable_with_tool_context
 
 # 加载环境变量
 load_dotenv()
@@ -124,6 +125,7 @@ def create_top_supervisor(checkpointer) -> tuple:
         store=InMemoryStore()
     )
     
+    agent = wrap_runnable_with_tool_context(agent, agent_name="top-supervisor")
     return agent, checkpointer
 
 

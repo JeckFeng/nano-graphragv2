@@ -27,7 +27,7 @@ HARDCODED_TIMEOUT = 60.0
 HARDCODED_MAX_CALLS = 5
 
 # 配置文件路径
-CONFIG_FILE = Path(__file__).parent / "tool.yaml"
+CONFIG_FILE = Path(__file__).parent.parent / "config" / "tool.yaml"
 
 
 class ToolConfig:

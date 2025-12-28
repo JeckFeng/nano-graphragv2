@@ -23,16 +23,17 @@ import concurrent.futures
 import json
 import logging
 import time
+from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime
 from functools import wraps
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, Iterator, List, Optional, Union
 from uuid import UUID
 
 from langchain_core.tools import tool
 
-from config.tool_config import get_tool_config
+from core.tool_config import get_tool_config
 from core.logger_config import get_logger_config
 
 logger = logging.getLogger(__name__)
@@ -41,8 +42,8 @@ logger = logging.getLogger(__name__)
 # 上下文变量定义（线程/协程安全）
 # ================================
 _call_logs: ContextVar[List[Dict[str, Any]]] = ContextVar("call_logs", default=[])
-_current_agent_name: ContextVar[str] = ContextVar("current_agent_name", default="unknown")
-_current_worker_name: ContextVar[Optional[str]] = ContextVar("current_worker_name", default=None)
+_current_agent_name: ContextVar[Optional[str]] = ContextVar("current_agent_name", default=None)
+_current_thread_id: ContextVar[Optional[str]] = ContextVar("current_thread_id", default=None)
 
 # 从 logger.yaml 读取 tool 日志配置
 _tool_log_config = None
@@ -74,30 +75,99 @@ LOG_DIR = _get_log_dir()  # 保持向后兼容
 DEFAULT_TIMEOUT = 60.0
 DEFAULT_MAX_CALLS = 5
 
+_UNSET = object()
+
+
+def _normalize_agent_name(agent_name: Optional[str]) -> Optional[str]:
+    if not agent_name or agent_name == "unknown":
+        return None
+    return agent_name
+
+
+def _extract_thread_id(config: Optional[Dict[str, Any]]) -> Optional[str]:
+    if not config:
+        return None
+    if isinstance(config, dict):
+        configurable = config.get("configurable", {})
+    else:
+        configurable = getattr(config, "configurable", {}) or {}
+    if not isinstance(configurable, dict):
+        return None
+    thread_id = configurable.get("thread_id")
+    if thread_id is None:
+        return None
+    return str(thread_id)
+
 
 # =================================
 # 公共日志工具函数
 # =================================
 
 
-def set_current_agent_name(agent_name: str) -> None:
+def set_current_agent_name(agent_name: Optional[str]) -> None:
     """
     在调用工具前设置当前 Agent 名称
     
     Args:
-        agent_name: Agent 名称
+        agent_name: Agent 名称，如果为 None 则清除
     """
     _current_agent_name.set(agent_name)
 
-
-def set_current_worker_name(worker_name: Optional[str]) -> None:
+def set_current_thread_id(thread_id: Optional[str]) -> None:
     """
-    在调用工具前设置当前 Worker 名称
+    设置当前 thread_id
     
     Args:
-        worker_name: Worker 名称，如果为 None 则清除
+        thread_id: LangGraph 的 thread_id
     """
-    _current_worker_name.set(worker_name)
+    _current_thread_id.set(thread_id)
+
+
+@contextmanager
+def tool_call_context(
+    *,
+    agent_name: Union[str, None, object] = _UNSET,
+    thread_id: Union[str, None, object] = _UNSET,
+) -> Iterator[None]:
+    tokens = []
+    if agent_name is not _UNSET:
+        tokens.append((_current_agent_name, _current_agent_name.set(agent_name)))
+    if thread_id is not _UNSET:
+        tokens.append((_current_thread_id, _current_thread_id.set(thread_id)))
+    try:
+        yield
+    finally:
+        for var, token in reversed(tokens):
+            var.reset(token)
+
+
+class _ContextWrappedRunnable:
+    def __init__(self, runnable: Any, agent_name: str) -> None:
+        self._runnable = runnable
+        self._agent_name = agent_name
+
+    def invoke(self, input: Any, config: Optional[Dict[str, Any]] = None, **kwargs: Any) -> Any:
+        thread_id = _extract_thread_id(config)
+        if thread_id is None:
+            with tool_call_context(agent_name=self._agent_name):
+                return self._runnable.invoke(input, config=config, **kwargs)
+        with tool_call_context(agent_name=self._agent_name, thread_id=thread_id):
+            return self._runnable.invoke(input, config=config, **kwargs)
+
+    async def ainvoke(self, input: Any, config: Optional[Dict[str, Any]] = None, **kwargs: Any) -> Any:
+        thread_id = _extract_thread_id(config)
+        if thread_id is None:
+            with tool_call_context(agent_name=self._agent_name):
+                return await self._runnable.ainvoke(input, config=config, **kwargs)
+        with tool_call_context(agent_name=self._agent_name, thread_id=thread_id):
+            return await self._runnable.ainvoke(input, config=config, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._runnable, name)
+
+
+def wrap_runnable_with_tool_context(runnable: Any, agent_name: str) -> Any:
+    return _ContextWrappedRunnable(runnable, agent_name)
 
 
 def get_tool_logs() -> List[Dict[str, Any]]:
@@ -163,7 +233,7 @@ def _persist_log_sync(log_entry: Dict[str, Any]) -> None:
 
 def _record_log(
     tool_name: str,
-    agent_name: str,
+    agent_name: Optional[str],
     function_type: str,
     args: Any,
     kwargs: Any,
@@ -186,7 +256,8 @@ def _record_log(
         is_success: 是否成功
         duration: 执行时长（秒）
     """
-    worker_name = _current_worker_name.get()
+    thread_id = _current_thread_id.get()
+    resolved_agent_name = _normalize_agent_name(agent_name) or "unknown"
     
     # 构建输入参数（合并 args 和 kwargs）
     input_params: Dict[str, Any] = {}
@@ -200,9 +271,9 @@ def _record_log(
         "timestamp": datetime.utcnow().isoformat() + "Z",
         "level": "DEBUG" if is_success else "ERROR",
         "logger": "tool",
+        "thread_id": thread_id or "unknown",
         "tool_name": tool_name,
-        "agent_name": agent_name,
-        "worker_name": worker_name or "unknown",
+        "agent_name": resolved_agent_name,
         "function_type": function_type,
         "input_params": input_params,
         "output_result": result,
@@ -258,7 +329,6 @@ def _inject_context(
     tool_name: str,
     timeout: Optional[float] = None,
     max_calls: Optional[int] = None,
-    worker_name: Optional[str] = None,
 ) -> Callable:
     """
     为工具函数注入上下文
@@ -275,8 +345,6 @@ def _inject_context(
         tool_name: 工具名称
         timeout: 超时时间（秒），如果为 None 则从配置读取
         max_calls: 最大调用次数，如果为 None 则从配置读取
-        worker_name: Worker 名称，用于读取 Worker 级别配置
-    
     Returns:
         Callable: 包装后的函数
     """
@@ -297,7 +365,7 @@ def _inject_context(
         
         @wraps(func)
         async def wrapper(*args, **kwargs):
-            agent_name = _current_agent_name.get()
+            agent_name = _normalize_agent_name(_current_agent_name.get())
             
             # 运行时确定配置（优先级：装饰器参数 > tool.yaml）
             actual_timeout = decorator_timeout if decorator_timeout is not None else config.get_tool_timeout(tool_name, agent_name)
@@ -380,7 +448,7 @@ def _inject_context(
         
         @wraps(func)
         def wrapper(*args, **kwargs):
-            agent_name = _current_agent_name.get()
+            agent_name = _normalize_agent_name(_current_agent_name.get())
             
             # 运行时确定配置（优先级：装饰器参数 > tool.yaml）
             actual_timeout = decorator_timeout if decorator_timeout is not None else config.get_tool_timeout(tool_name, agent_name)
@@ -466,7 +534,6 @@ def context_tool(
     description: Optional[str] = None,
     timeout: Optional[float] = None,
     max_calls: Optional[int] = None,
-    worker_name: Optional[str] = None,
 ):
     """
     统一的工具定义装饰器
@@ -480,7 +547,7 @@ def context_tool(
     配置优先级：
     1. 装饰器参数（timeout, max_calls）
     2. tool.yaml 中的工具级别配置
-    3. tool.yaml 中的 Worker 级别配置
+    3. tool.yaml 中的 Agent 级别默认配置
     4. tool.yaml 中的全局默认配置
     
     使用示例:
@@ -496,18 +563,11 @@ def context_tool(
             '''另一个工具'''
             return "result"
         
-        # 方式3：指定 Worker 名称（用于读取 Worker 级别配置）
-        @context_tool(worker_name="rag_worker")
-        async def search_tool(query: str) -> str:
-            '''搜索工具'''
-            return "result"
-    
     Args:
         name: 工具名称，如果为 None 则使用函数名
         description: 工具描述
         timeout: 超时时间（秒），如果为 None 则从配置读取
         max_calls: 最大调用次数，如果为 None 则从配置读取
-        worker_name: Worker 名称，用于读取 Worker 级别配置
     
     Returns:
         Callable: 装饰后的工具函数
@@ -516,17 +576,13 @@ def context_tool(
     def wrap_func(func: Callable):
         # 确定工具名称
         tool_name = name if isinstance(name, str) else func.__name__
-        
-        # 获取 Worker 名称（优先使用装饰器参数，其次从上下文获取）
-        final_worker_name = worker_name or _current_worker_name.get()
-        
+
         # 注入上下文（超时、调用次数、日志）
         wrapped = _inject_context(
             func,
             tool_name=tool_name,
             timeout=timeout,
             max_calls=max_calls,
-            worker_name=final_worker_name,
         )
         
         # 兼容 LangChain @tool 装饰器
@@ -550,8 +606,10 @@ def context_tool(
 __all__ = [
     "context_tool",
     "set_current_agent_name",
-    "set_current_worker_name",
+    "set_current_thread_id",
+    "tool_call_context",
+    "wrap_runnable_with_tool_context",
     "get_tool_logs",
     "LOG_DIR",
-    "_call_logs",  # 导出用于 worker 日志记录
+    "_call_logs",
 ]

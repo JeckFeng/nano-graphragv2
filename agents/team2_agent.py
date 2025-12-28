@@ -27,6 +27,7 @@ from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
+from core.tool_context import wrap_runnable_with_tool_context
 
 # 导入已有的代理实现
 from agents.deep_agent_add import create_math_agent as create_addition_agent
@@ -105,6 +106,7 @@ def create_team2_agent() -> tuple:
         checkpointer=checkpointer
     )
     
+    agent = wrap_runnable_with_tool_context(agent, agent_name="team2-agent")
     return agent, checkpointer
 
 

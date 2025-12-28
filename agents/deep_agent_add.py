@@ -25,7 +25,7 @@ from typing import Literal
 
 from deepagents import create_deep_agent
 from dotenv import load_dotenv
-from core.tool_context import context_tool
+from core.tool_context import context_tool, wrap_runnable_with_tool_context
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
@@ -93,6 +93,7 @@ def create_math_agent() -> tuple:
 3. 不要尝试用其他方式计算或编造结果"""
     )
     
+    agent = wrap_runnable_with_tool_context(agent, agent_name="addition-agent")
     return agent, checkpointer
 
 
