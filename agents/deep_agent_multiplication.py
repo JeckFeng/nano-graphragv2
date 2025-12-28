@@ -23,7 +23,7 @@ from typing import Literal
 
 from deepagents import create_deep_agent
 from dotenv import load_dotenv
-from langchain_core.tools import tool
+from core.tool_context import context_tool
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
@@ -32,7 +32,7 @@ from langgraph.types import Command
 load_dotenv()
 
 
-@tool
+@context_tool
 def multiply_numbers(a: int, b: int) -> int:
     """
     两数相乘工具

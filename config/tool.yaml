@@ -1,0 +1,70 @@
+# ============================================================================
+# 工具配置文件 (config/tool.yaml)
+# ============================================================================
+# 定义工具的参数配置（timeout, max_calls）
+# 通过 agent_name 关联到 agents.yaml 中定义的 Agent
+# ============================================================================
+
+# 全局默认配置（所有工具的默认值）
+global_defaults:
+  timeout: 60.0          # 默认超时时间（秒）
+  max_calls: 5           # 默认最大调用次数
+
+# 按 Agent 分类的工具配置
+# agent_name 必须与 agents.yaml 中定义的 name 一致
+agents:
+  
+  # ========== 加法代理 ==========
+  addition-agent:
+    # Agent 级别的默认配置（该 Agent 下所有工具的默认值）
+    defaults:
+      timeout: 30.0
+      max_calls: 3
+    
+    # 工具级别的配置（覆盖 Agent 默认值）
+    # tool_name 必须与 agents.yaml 中该 Agent 的 tools 列表一致
+    tools:
+      add_numbers:
+        timeout: 20.0      # 加法工具的超时时间
+        max_calls: 5       # 加法工具的最大调用次数
+  
+  # ========== 减法代理 ==========
+  subtraction-agent:
+    defaults:
+      timeout: 30.0
+      max_calls: 3
+    tools:
+      subtract_numbers:
+        timeout: 25.0
+        max_calls: 4
+  
+  # ========== 乘法代理 ==========
+  multiplication-agent:
+    defaults:
+      timeout: 40.0
+      max_calls: 4
+    tools:
+      multiply_numbers:
+        timeout: 35.0
+        max_calls: 6
+  
+  # ========== 除法代理 ==========
+  division-agent:
+    defaults:
+      timeout: 40.0
+      max_calls: 4
+    tools:
+      divide_numbers:
+        timeout: 30.0
+        max_calls: 5
+
+# 配置查找优先级：
+# 1. agents.<agent_name>.tools.<tool_name>.<parameter>
+# 2. agents.<agent_name>.defaults.<parameter>
+# 3. global_defaults.<parameter>
+# 4. 硬编码默认值（timeout=60.0, max_calls=5）
+
+# 注意：
+# - 只配置直接使用工具的 Agent（agents.yaml 中 type=agent 的）
+# - Team Agent 和 Top Supervisor 不需要在这里配置
+# - agent_name 必须与 agents.yaml 中的 name 字段完全一致

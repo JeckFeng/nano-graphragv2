@@ -1,5 +1,5 @@
 """
-Deep Agent 除法工具示例
+Deep Agent 加法工具示例
 
 本模块演示如何使用 LangGraph 的 Deep Agents 框架构建一个带有人工审核功能的智能代理。
 该代理使用 DashScope 的 qwen-plus 模型，并实现了 Human-in-the-loop 功能。
@@ -14,17 +14,15 @@ Deep Agent 除法工具示例
     - 必须配置 DASHSCOPE_API_KEY 环境变量
     - 使用 MemorySaver 作为 checkpointer 以支持状态持久化
     - 工具调用需要人工审核批准
-    - 除数不能为零
 """
 
-import asyncio
 import os
 import uuid
 from typing import Literal
 
 from deepagents import create_deep_agent
 from dotenv import load_dotenv
-from core.tool_context import context_tool
+from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
@@ -33,24 +31,19 @@ from langgraph.types import Command
 load_dotenv()
 
 
-@context_tool
-def divide_numbers(a: float, b: float) -> float:
+@tool
+def add_numbers(a: int, b: int) -> int:
     """
-    两数相除工具
+    两数相加工具
     
     Args:
-        a: 被除数
-        b: 除数
+        a: 第一个整数
+        b: 第二个整数
         
     Returns:
-        float: 两数之商
-        
-    Raises:
-        ValueError: 当除数为零时抛出
+        int: 两数之和
     """
-    if b == 0:
-        raise ValueError("除数不能为零")
-    return a / b
+    return a + b
 
 
 def create_math_agent() -> tuple:
@@ -83,15 +76,15 @@ def create_math_agent() -> tuple:
     # 创建 Deep Agent
     agent = create_deep_agent(
         model=model,
-        tools=[divide_numbers],
+        tools=[add_numbers],
         interrupt_on={
-            "divide_numbers": True,  # 调用除法工具时中断，等待人工审核
+            "add_numbers": True,  # 调用加法工具时中断，等待人工审核
         },
         checkpointer=checkpointer,
-        system_prompt="""你是一个数学助手。使用 divide_numbers 工具来计算两数之商。注意除数不能为零。
+        system_prompt="""你是一个数学助手。使用 add_numbers 工具来计算两数之和。
 
 **严格规则**：
-1. 禁止自己进行任何计算，无论多简单，必须使用 divide_numbers 工具
+1. 禁止自己进行任何计算，无论多简单，必须使用 add_numbers 工具
 2. 如果工具调用被人工审核拒绝（rejected），不要重试，直接报告操作被拒绝
 3. 不要尝试用其他方式计算或编造结果"""
     )
@@ -148,10 +141,10 @@ def handle_human_review(result: dict, config: dict, agent) -> dict:
         print("✓ 默认批准工具调用")
     
     # 使用相同的 config 恢复执行
-    result = asyncio.run(agent.ainvoke(
+    result = agent.invoke(
         Command(resume={"decisions": decisions}),
         config=config
-    ))
+    )
     
     return result
 
@@ -174,10 +167,10 @@ def main() -> None:
         config = {"configurable": {"thread_id": str(uuid.uuid4())}}
         
         # 发送用户请求
-        print("发送请求: What is 20 / 4?")
-        result = asyncio.run(agent.ainvoke({
-            "messages": [{"role": "user", "content": "What is 20 / 4?"}]
-        }, config=config))
+        print("发送请求: What is 5 + 3?")
+        result = agent.invoke({
+            "messages": [{"role": "user", "content": "What is 5 + 3?"}]
+        }, config=config)
         
         # 检查是否触发中断（需要人工审核）
         if result.get("__interrupt__"):

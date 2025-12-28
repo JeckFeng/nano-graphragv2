@@ -1,0 +1,203 @@
+# =============================================================================
+# nano-graphv1 Agent 配置文件（单一真相）
+# =============================================================================
+# 定义系统中所有 Agent 的配置，包括 Teams 和 Workers
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Team Supervisors
+# -----------------------------------------------------------------------------
+teams:
+  - name: rag_team
+    type: team
+    description: "知识库检索团队，处理 RAG 相关任务"
+    intents:
+      - knowledge_query
+      - document_search
+      - rag_query
+    # 用于意图识别的关键词
+    keywords:
+      - 知识
+      - 文档
+      - 说明
+      - 政策
+      - 规定
+      - 产品
+      - 介绍
+      - knowledge
+      - document
+      - policy
+      - manual
+    workers:
+      - doc_searcher
+      - answer_generator
+    max_concurrency: 3
+    fallback_chain: []
+    
+  - name: sql_team
+    type: team
+    description: "SQL 数据库查询团队"
+    intents:
+      - sql_query
+      - database_query
+      - data_analysis
+    keywords:
+      - 数据库
+      - 查询
+      - SQL
+      - 统计
+      - 分析
+      - 数据
+      - 记录
+      - database
+      - query
+      - statistics
+      - analysis
+    workers:
+      - schema_analyzer
+      - query_executor
+    max_concurrency: 3
+    fallback_chain:
+      - rag_team  # SQL 失败时可降级为 RAG 查询
+      
+  - name: amap_team
+    type: team
+    description: "高德地图路线规划团队"
+    intents:
+      - route_planning
+      - poi_search
+      - navigation
+    keywords:
+      - 路线
+      - 导航
+      - 距离
+      - 到
+      - 从
+      - 怎么走
+      - 多远
+      - route
+      - distance
+      - navigation
+    workers:
+      - route_planner
+      - poi_searcher
+    max_concurrency: 3
+    fallback_chain: []
+    
+  - name: neo4j_team
+    type: team
+    description: "Neo4j 图数据库查询团队"
+    intents:
+      - graph_query
+      - relationship_analysis
+      - node_search
+    keywords:
+      - 关系
+      - 图
+      - 连接
+      - 关联
+      - 网络
+      - 节点
+      - relationship
+      - graph
+      - network
+      - node
+    workers:
+      - graph_querier
+      - relationship_analyzer
+    max_concurrency: 3
+    fallback_chain: []
+
+# -----------------------------------------------------------------------------
+# Workers
+# -----------------------------------------------------------------------------
+workers:
+  # RAG Team Workers
+  - name: doc_searcher
+    type: worker
+    team: rag_team
+    description: "文档搜索专家，在知识库中搜索相关文档"
+    tools:
+      - search_knowledge_base
+      - get_document_content
+    max_concurrency: 2
+    
+  - name: answer_generator
+    type: worker
+    team: rag_team
+    description: "答案生成专家，根据检索结果生成答案"
+    tools: []  # 使用 LLM 能力，不需要额外工具
+    max_concurrency: 2
+    
+  # SQL Team Workers
+  - name: schema_analyzer
+    type: worker
+    team: sql_team
+    description: "表结构分析专家"
+    tools:
+      - get_table_schema
+      - list_tables
+    max_concurrency: 2
+    
+  - name: query_executor
+    type: worker
+    team: sql_team
+    description: "SQL 查询执行专家"
+    tools:
+      - execute_sql
+      - explain_query
+    max_concurrency: 2
+    
+  # AMAP Team Workers
+  - name: route_planner
+    type: worker
+    team: amap_team
+    description: "路线规划专家"
+    tools:
+      - plan_route
+      - plan_driving_route
+      - plan_walking_route
+      - plan_transit_route
+    max_concurrency: 2
+    approval_enabled: true  # 启用人工审核
+    
+  - name: poi_searcher
+    type: worker
+    team: amap_team
+    description: "POI 搜索专家"
+    tools:
+      - search_poi
+      - get_poi_detail
+    max_concurrency: 2
+    
+  # Neo4j Team Workers
+  - name: graph_querier
+    type: worker
+    team: neo4j_team
+    description: "图查询专家"
+    tools:
+      - execute_cypher
+      - get_node
+    max_concurrency: 2
+    
+  - name: relationship_analyzer
+    type: worker
+    team: neo4j_team
+    description: "关系分析专家"
+    tools:
+      - find_relationships
+      - analyze_path
+    max_concurrency: 2
+
+# -----------------------------------------------------------------------------
+# Top Supervisor 配置
+# -----------------------------------------------------------------------------
+top_supervisor:
+  name: top_supervisor
+  description: "系统顶层调度器，协调所有 Team"
+  teams:
+    - rag_team
+    - sql_team
+    - amap_team
+    - neo4j_team
+  max_concurrency: 5

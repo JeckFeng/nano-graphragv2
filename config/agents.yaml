@@ -1,0 +1,61 @@
+# ============================================================================
+# Agent 配置文件 (config/agents.yaml)
+# ============================================================================
+# 定义系统中所有 Agent 的结构、名称、工具列表
+# ============================================================================
+
+# ---------------------------------------------------------------------------
+# 底层 Agent（直接使用工具的 Agent）
+# ---------------------------------------------------------------------------
+agents:
+  - name: addition-agent
+    type: agent
+    description: "加法代理，负责两数相加运算"
+    tools:
+      - add_numbers
+  
+  - name: subtraction-agent
+    type: agent
+    description: "减法代理，负责两数相减运算"
+    tools:
+      - subtract_numbers
+  
+  - name: multiplication-agent
+    type: agent
+    description: "乘法代理，负责两数相乘运算"
+    tools:
+      - multiply_numbers
+  
+  - name: division-agent
+    type: agent
+    description: "除法代理，负责两数相除运算"
+    tools:
+      - divide_numbers
+
+# ---------------------------------------------------------------------------
+# Team Agent（管理子 Agent，不直接使用工具）
+# ---------------------------------------------------------------------------
+teams:
+  - name: team1-agent
+    type: team
+    description: "乘法和除法团队"
+    agents:
+      - multiplication-agent
+      - division-agent
+  
+  - name: team2-agent
+    type: team
+    description: "加法和减法团队"
+    agents:
+      - addition-agent
+      - subtraction-agent
+
+# ---------------------------------------------------------------------------
+# Top Supervisor（总经理，不直接使用工具）
+# ---------------------------------------------------------------------------
+top_supervisor:
+  name: top-supervisor
+  description: "总经理代理，协调所有团队"
+  teams:
+    - team1-agent
+    - team2-agent
