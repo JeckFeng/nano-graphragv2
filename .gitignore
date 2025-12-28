@@ -8,3 +8,9 @@ __pycache__/
 # Editor/IDE settings
 .kiro/
 .cursor/
+
+# docs
+docs/
+
+# back
+back_code/
