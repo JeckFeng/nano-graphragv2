@@ -26,7 +26,7 @@ agents:
     tools:
       add_numbers:
         timeout: 20.0      # 加法工具的超时时间
-        max_calls: 5       # 加法工具的最大调用次数
+        max_calls: 2       # 加法工具的最大调用次数
   
   # ========== 减法代理 ==========
   subtraction-agent:

@@ -34,7 +34,6 @@ from langchain_core.tools import tool
 
 from config.tool_config import get_tool_config
 from core.logger_config import get_logger_config
-from core.logging_context import session_id_var, user_id_var
 
 logger = logging.getLogger(__name__)
 
@@ -176,7 +175,6 @@ def _record_log(
     统一追加一条工具调用日志
     
     同时记录到内存上下文和持久化到文件。
-    增强版本：添加 session_id、user_id、worker_name 等上下文字段。
     
     Args:
         tool_name: 工具名称
@@ -188,9 +186,6 @@ def _record_log(
         is_success: 是否成功
         duration: 执行时长（秒）
     """
-    # 从上下文变量获取 session_id、user_id
-    session_id = session_id_var.get()
-    user_id = user_id_var.get()
     worker_name = _current_worker_name.get()
     
     # 构建输入参数（合并 args 和 kwargs）
@@ -200,22 +195,19 @@ def _record_log(
     if kwargs:
         input_params["kwargs"] = kwargs
     
-    # 构建日志条目（统一格式，与其他层级一致）
+    # 构建日志条目
     log_entry: Dict[str, Any] = {
-        "timestamp": datetime.utcnow().isoformat() + "Z",  # ISO 格式时间戳
-        "level": "DEBUG" if is_success else "ERROR",  # 日志级别
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "level": "DEBUG" if is_success else "ERROR",
         "logger": "tool",
         "tool_name": tool_name,
+        "agent_name": agent_name,
         "worker_name": worker_name or "unknown",
-        "session_id": session_id or "-",
-        "user_id": user_id or "-",
-        "input_params": input_params,  # 统一使用 input_params 字段
-        "output_result": result,  # 统一使用 output_result 字段
+        "function_type": function_type,
+        "input_params": input_params,
+        "output_result": result,
         "is_success": is_success,
         "duration": round(duration, 6) if duration is not None else None,
-        # 保留旧字段以保持向后兼容
-        "agent": agent_name,
-        "function_type": function_type,
         "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
     
