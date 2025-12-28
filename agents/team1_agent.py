@@ -106,7 +106,7 @@ def create_team1_agent() -> tuple:
         checkpointer=checkpointer
     )
     
-    agent = wrap_runnable_with_tool_context(agent, agent_name="team1-agent")
+    agent = wrap_runnable_with_tool_context(agent)
     return agent, checkpointer
 
 

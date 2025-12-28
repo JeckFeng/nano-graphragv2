@@ -125,7 +125,7 @@ def create_top_supervisor(checkpointer) -> tuple:
         store=InMemoryStore()
     )
     
-    agent = wrap_runnable_with_tool_context(agent, agent_name="top-supervisor")
+    agent = wrap_runnable_with_tool_context(agent)
     return agent, checkpointer
 
 

@@ -96,7 +96,7 @@ def create_math_agent() -> tuple:
 3. 不要尝试用其他方式计算或编造结果"""
     )
     
-    agent = wrap_runnable_with_tool_context(agent, agent_name="division-agent")
+    agent = wrap_runnable_with_tool_context(agent)
     return agent, checkpointer
 
 

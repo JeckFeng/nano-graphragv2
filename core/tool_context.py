@@ -42,7 +42,6 @@ logger = logging.getLogger(__name__)
 # 上下文变量定义（线程/协程安全）
 # ================================
 _call_logs: ContextVar[List[Dict[str, Any]]] = ContextVar("call_logs", default=[])
-_current_agent_name: ContextVar[Optional[str]] = ContextVar("current_agent_name", default=None)
 _current_thread_id: ContextVar[Optional[str]] = ContextVar("current_thread_id", default=None)
 
 # 从 logger.yaml 读取 tool 日志配置
@@ -78,12 +77,6 @@ DEFAULT_MAX_CALLS = 5
 _UNSET = object()
 
 
-def _normalize_agent_name(agent_name: Optional[str]) -> Optional[str]:
-    if not agent_name or agent_name == "unknown":
-        return None
-    return agent_name
-
-
 def _extract_thread_id(config: Optional[Dict[str, Any]]) -> Optional[str]:
     if not config:
         return None
@@ -102,17 +95,6 @@ def _extract_thread_id(config: Optional[Dict[str, Any]]) -> Optional[str]:
 # =================================
 # 公共日志工具函数
 # =================================
-
-
-def set_current_agent_name(agent_name: Optional[str]) -> None:
-    """
-    在调用工具前设置当前 Agent 名称
-    
-    Args:
-        agent_name: Agent 名称，如果为 None 则清除
-    """
-    _current_agent_name.set(agent_name)
-
 def set_current_thread_id(thread_id: Optional[str]) -> None:
     """
     设置当前 thread_id
@@ -126,12 +108,9 @@ def set_current_thread_id(thread_id: Optional[str]) -> None:
 @contextmanager
 def tool_call_context(
     *,
-    agent_name: Union[str, None, object] = _UNSET,
     thread_id: Union[str, None, object] = _UNSET,
 ) -> Iterator[None]:
     tokens = []
-    if agent_name is not _UNSET:
-        tokens.append((_current_agent_name, _current_agent_name.set(agent_name)))
     if thread_id is not _UNSET:
         tokens.append((_current_thread_id, _current_thread_id.set(thread_id)))
     try:
@@ -142,32 +121,31 @@ def tool_call_context(
 
 
 class _ContextWrappedRunnable:
-    def __init__(self, runnable: Any, agent_name: str) -> None:
+    def __init__(self, runnable: Any) -> None:
         self._runnable = runnable
-        self._agent_name = agent_name
 
     def invoke(self, input: Any, config: Optional[Dict[str, Any]] = None, **kwargs: Any) -> Any:
         thread_id = _extract_thread_id(config)
         if thread_id is None:
-            with tool_call_context(agent_name=self._agent_name):
+            with tool_call_context():
                 return self._runnable.invoke(input, config=config, **kwargs)
-        with tool_call_context(agent_name=self._agent_name, thread_id=thread_id):
+        with tool_call_context(thread_id=thread_id):
             return self._runnable.invoke(input, config=config, **kwargs)
 
     async def ainvoke(self, input: Any, config: Optional[Dict[str, Any]] = None, **kwargs: Any) -> Any:
         thread_id = _extract_thread_id(config)
         if thread_id is None:
-            with tool_call_context(agent_name=self._agent_name):
+            with tool_call_context():
                 return await self._runnable.ainvoke(input, config=config, **kwargs)
-        with tool_call_context(agent_name=self._agent_name, thread_id=thread_id):
+        with tool_call_context(thread_id=thread_id):
             return await self._runnable.ainvoke(input, config=config, **kwargs)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._runnable, name)
 
 
-def wrap_runnable_with_tool_context(runnable: Any, agent_name: str) -> Any:
-    return _ContextWrappedRunnable(runnable, agent_name)
+def wrap_runnable_with_tool_context(runnable: Any) -> Any:
+    return _ContextWrappedRunnable(runnable)
 
 
 def get_tool_logs() -> List[Dict[str, Any]]:
@@ -233,7 +211,6 @@ def _persist_log_sync(log_entry: Dict[str, Any]) -> None:
 
 def _record_log(
     tool_name: str,
-    agent_name: Optional[str],
     function_type: str,
     args: Any,
     kwargs: Any,
@@ -248,7 +225,6 @@ def _record_log(
     
     Args:
         tool_name: 工具名称
-        agent_name: Agent 名称
         function_type: 函数类型（"async" 或 "sync"）
         args: 位置参数
         kwargs: 关键字参数
@@ -257,7 +233,6 @@ def _record_log(
         duration: 执行时长（秒）
     """
     thread_id = _current_thread_id.get()
-    resolved_agent_name = _normalize_agent_name(agent_name) or "unknown"
     
     # 构建输入参数（合并 args 和 kwargs）
     input_params: Dict[str, Any] = {}
@@ -273,7 +248,6 @@ def _record_log(
         "logger": "tool",
         "thread_id": thread_id or "unknown",
         "tool_name": tool_name,
-        "agent_name": resolved_agent_name,
         "function_type": function_type,
         "input_params": input_params,
         "output_result": result,
@@ -335,7 +309,7 @@ def _inject_context(
     
     注入功能：
     - 调用次数限制（异常/超时也计数）
-    - 日志记录（包含 time / duration / error / is_success / agent / function_type）
+    - 日志记录（包含 time / duration / error / is_success / function_type）
     - 超时保护（超时不抛异常，而是返回错误字典，让 Agent 自己判断）
     - 日志持久化到 /Logs/tool_logs
     - 从 tool.yaml 读取配置（支持多层级优先级）
@@ -349,8 +323,6 @@ def _inject_context(
         Callable: 包装后的函数
     """
     # 从配置读取默认值（如果装饰器参数未指定）
-    # 注意：这里不能获取 agent_name，因为装饰器在模块加载时执行
-    # agent_name 需要在运行时从上下文变量获取
     config = get_tool_config()
     decorator_timeout = timeout  # 保存装饰器参数
     decorator_max_calls = max_calls
@@ -365,11 +337,9 @@ def _inject_context(
         
         @wraps(func)
         async def wrapper(*args, **kwargs):
-            agent_name = _normalize_agent_name(_current_agent_name.get())
-            
             # 运行时确定配置（优先级：装饰器参数 > tool.yaml）
-            actual_timeout = decorator_timeout if decorator_timeout is not None else config.get_tool_timeout(tool_name, agent_name)
-            actual_max_calls = decorator_max_calls if decorator_max_calls is not None else config.get_tool_max_calls(tool_name, agent_name)
+            actual_timeout = decorator_timeout if decorator_timeout is not None else config.get_tool_timeout(tool_name)
+            actual_max_calls = decorator_max_calls if decorator_max_calls is not None else config.get_tool_max_calls(tool_name)
             
             count = call_counts.get(tool_name, 0)
             
@@ -380,7 +350,6 @@ def _inject_context(
                 }
                 _record_log(
                     tool_name=tool_name,
-                    agent_name=agent_name,
                     function_type=function_type,
                     args=args,
                     kwargs=kwargs,
@@ -397,7 +366,6 @@ def _inject_context(
                 duration = time.perf_counter() - start
                 _record_log(
                     tool_name=tool_name,
-                    agent_name=agent_name,
                     function_type=function_type,
                     args=args,
                     kwargs=kwargs,
@@ -413,7 +381,6 @@ def _inject_context(
                 }
                 _record_log(
                     tool_name=tool_name,
-                    agent_name=agent_name,
                     function_type=function_type,
                     args=args,
                     kwargs=kwargs,
@@ -428,7 +395,6 @@ def _inject_context(
                 }
                 _record_log(
                     tool_name=tool_name,
-                    agent_name=agent_name,
                     function_type=function_type,
                     args=args,
                     kwargs=kwargs,
@@ -448,11 +414,9 @@ def _inject_context(
         
         @wraps(func)
         def wrapper(*args, **kwargs):
-            agent_name = _normalize_agent_name(_current_agent_name.get())
-            
             # 运行时确定配置（优先级：装饰器参数 > tool.yaml）
-            actual_timeout = decorator_timeout if decorator_timeout is not None else config.get_tool_timeout(tool_name, agent_name)
-            actual_max_calls = decorator_max_calls if decorator_max_calls is not None else config.get_tool_max_calls(tool_name, agent_name)
+            actual_timeout = decorator_timeout if decorator_timeout is not None else config.get_tool_timeout(tool_name)
+            actual_max_calls = decorator_max_calls if decorator_max_calls is not None else config.get_tool_max_calls(tool_name)
             
             count = call_counts.get(tool_name, 0)
             
@@ -463,7 +427,6 @@ def _inject_context(
                 }
                 _record_log(
                     tool_name=tool_name,
-                    agent_name=agent_name,
                     function_type=function_type,
                     args=args,
                     kwargs=kwargs,
@@ -478,7 +441,6 @@ def _inject_context(
                 duration = time.perf_counter() - start
                 _record_log(
                     tool_name=tool_name,
-                    agent_name=agent_name,
                     function_type=function_type,
                     args=args,
                     kwargs=kwargs,
@@ -494,7 +456,6 @@ def _inject_context(
                 }
                 _record_log(
                     tool_name=tool_name,
-                    agent_name=agent_name,
                     function_type=function_type,
                     args=args,
                     kwargs=kwargs,
@@ -508,7 +469,6 @@ def _inject_context(
                 }
                 _record_log(
                     tool_name=tool_name,
-                    agent_name=agent_name,
                     function_type=function_type,
                     args=args,
                     kwargs=kwargs,
@@ -605,7 +565,6 @@ def context_tool(
 
 __all__ = [
     "context_tool",
-    "set_current_agent_name",
     "set_current_thread_id",
     "tool_call_context",
     "wrap_runnable_with_tool_context",

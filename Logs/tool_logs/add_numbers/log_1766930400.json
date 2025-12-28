@@ -1,0 +1,1 @@
+{"timestamp": "2025-12-28T14:17:44.047630Z", "level": "DEBUG", "logger": "tool", "thread_id": "3a0f2339-568f-4110-b27a-16536ccb9dd8", "tool_name": "add_numbers", "function_type": "sync", "input_params": {"kwargs": {"a": 19, "b": 3}}, "output_result": 22, "is_success": true, "duration": 0.004022, "time": "2025-12-28 22:17:44"}
