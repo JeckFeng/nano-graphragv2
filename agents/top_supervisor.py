@@ -37,7 +37,13 @@ from agents.team2_agent import create_team2_agent
 # 加载环境变量
 load_dotenv()
 
-DB_URI = "postgresql://postgres:postgres@localhost:5432/langgraph_memory"
+# 从环境变量构建数据库 URI
+DB_USER = os.environ.get("DB_USER", "postgres")
+DB_PASSWORD = os.environ.get("DB_PASSWORD", "postgres")
+DB_HOST = os.environ.get("DB_HOST", "localhost")
+DB_PORT = os.environ.get("DB_PORT", "5432")
+DB_NAME = os.environ.get("LANGGRAPH_MEMORY_DB", "langgraph_memory")
+DB_URI = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
 
 def create_top_supervisor(checkpointer) -> tuple:
@@ -61,10 +67,13 @@ def create_top_supervisor(checkpointer) -> tuple:
     if not api_key:
         raise ValueError("DASHSCOPE_API_KEY 环境变量未设置")
     
+    # 从环境变量读取 Base URL
+    base_url = os.environ.get("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+    
     # 初始化 DashScope 模型（使用 ChatOpenAI 封装）
     model = ChatOpenAI(
         model="qwen-plus",
-        openai_api_base="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        openai_api_base=base_url,
         openai_api_key=api_key
     )
     
