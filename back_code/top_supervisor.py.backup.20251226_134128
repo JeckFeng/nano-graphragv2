@@ -12,42 +12,32 @@ Top Supervisor 管理两个团队代理：Team1 和 Team2。
 
 设计约束:
     - 必须配置 DASHSCOPE_API_KEY 环境变量
-    - 使用 AsyncPostgresSaver 作为 checkpointer 以支持状态持久化
+    - 使用 MemorySaver 作为 checkpointer 以支持状态持久化
     - 子代理的工具调用需要人工审核批准
     - Top Supervisor 本身不使用工具，只负责任务分发
     - 复用已有的 team1_agent 和 team2_agent 实现
 """
 
-import asyncio
 import os
 import uuid
 
 from deepagents import create_deep_agent, CompiledSubAgent
 from deepagents.backends import CompositeBackend, StateBackend, StoreBackend
 from dotenv import load_dotenv
-from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from langchain_openai import ChatOpenAI
+from langgraph.checkpoint.memory import MemorySaver
 from langgraph.store.memory import InMemoryStore
 from langgraph.types import Command
-from deepagents.backends import FilesystemBackend
+
 # 导入已有的团队代理实现
 from agents.team1_agent import create_team1_agent
 from agents.team2_agent import create_team2_agent
-# 导入 LLM 工厂
-from core import LLMFactory, load_llm_config
 
 # 加载环境变量
 load_dotenv()
 
-# 从环境变量构建数据库 URI
-DB_USER = os.environ.get("DB_USER", "postgres")
-DB_PASSWORD = os.environ.get("DB_PASSWORD", "postgres")
-DB_HOST = os.environ.get("DB_HOST", "localhost")
-DB_PORT = os.environ.get("DB_PORT", "5432")
-DB_NAME = os.environ.get("LANGGRAPH_MEMORY_DB", "langgraph_memory")
-DB_URI = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
-
-def create_top_supervisor(checkpointer) -> tuple:
+def create_top_supervisor() -> tuple:
     """
     创建 Top Supervisor（总经理代理）
     
@@ -61,18 +51,28 @@ def create_top_supervisor(checkpointer) -> tuple:
         tuple: (agent, checkpointer) - 代理实例和检查点保存器
         
     Raises:
-        ValueError: 当 LLM 配置无效时抛出
+        ValueError: 当 DASHSCOPE_API_KEY 未设置时抛出
     """
-    # 使用 LLM 工厂创建模型实例
-    # 从配置文件和环境变量加载配置
-    llm_config = load_llm_config()
-    model = LLMFactory.create_llm(llm_config)
+    # 验证 API Key
+    api_key = os.environ.get("DASHSCOPE_API_KEY")
+    if not api_key:
+        raise ValueError("DASHSCOPE_API_KEY 环境变量未设置")
+    
+    # 初始化 DashScope 模型（使用 ChatOpenAI 封装）
+    model = ChatOpenAI(
+        model="qwen-plus",
+        openai_api_base="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        openai_api_key=api_key
+    )
+    
+    # 创建内存检查点保存器（Human-in-the-loop 必需）
+    checkpointer = MemorySaver()
     
     # 配置混合存储后端（官方示例写法）
     composite_backend = lambda rt: CompositeBackend(
         default=StateBackend(rt),
         routes={
-            "/memories/": FilesystemBackend(root_dir="./fs",virtual_mode=True),
+            "/memories/": StoreBackend(rt),
         }
     )
     
@@ -127,7 +127,7 @@ def create_top_supervisor(checkpointer) -> tuple:
     return agent, checkpointer
 
 
-async def handle_human_review(result: dict, config: dict, agent) -> dict:
+def handle_human_review(result: dict, config: dict, agent) -> dict:
     """
     处理人工审核流程
     
@@ -185,7 +185,7 @@ async def handle_human_review(result: dict, config: dict, agent) -> dict:
             resume_map[interrupt_obj.id] = {"decisions":[decision]}
     print("resume_map is : ",resume_map)
     # 恢复中断
-    result = await agent.ainvoke(
+    result = agent.invoke(
         Command(resume=resume_map),
         config=config
     )
@@ -193,7 +193,7 @@ async def handle_human_review(result: dict, config: dict, agent) -> dict:
     return result
 
 
-async def main() -> None:
+def main() -> None:
     """
     主函数：演示 Top Supervisor 的多轮对话功能
     
@@ -205,50 +205,47 @@ async def main() -> None:
         5. 显示结果并继续下一轮对话
     """
     try:
-        async with AsyncPostgresSaver.from_conn_string(DB_URI) as checkpointer:
-            await checkpointer.setup()
-            # 创建总经理代理
-            agent, checkpointer = create_top_supervisor(checkpointer)
+        # 创建总经理代理
+        agent, checkpointer = create_top_supervisor()
+        
+        # 创建配置，包含唯一的 thread_id 用于状态持久化
+        thread_id = str(uuid.uuid4())
+        config = {"configurable": {"thread_id": thread_id}}
+        
+        print("=" * 60)
+        print("Top Supervisor - 总经理代理（带记忆功能）")
+        print("=" * 60)
+        print(f"Thread ID: {thread_id}")
+        print("\n功能说明：")
+        print("- 短期记忆：/workspace/ 下的文件仅在当前对话有效")
+        print("- 长期记忆：/memories/ 下的文件跨对话持久化")
+        print("- 输入 'quit' 或 'exit' 退出")
+        print("=" * 60)
+        
+        # 多轮对话循环
+        while True:
+            # 获取用户输入
+            user_input = input("\n你: ").strip()
             
-            # 创建配置，包含唯一的 thread_id 用于状态持久化
-            # 可以将thread_id硬编码，用来测试长期记忆，长期记忆必须要求是相同的thread_id
-            thread_id = str(uuid.uuid4())
-            config = {"configurable": {"thread_id": thread_id}}
+            # 退出条件
+            if user_input.lower() in ["quit", "exit", "退出"]:
+                print("\n再见！")
+                break
             
-            print("=" * 60)
-            print("Top Supervisor - 总经理代理（带记忆功能）")
-            print("=" * 60)
-            print(f"Thread ID: {thread_id}")
-            print("\n功能说明：")
-            print("- 短期记忆：/workspace/ 下的文件仅在当前对话有效")
-            print("- 长期记忆：/memories/ 下的文件跨对话持久化")
-            print("- 输入 'quit' 或 'exit' 退出")
-            print("=" * 60)
+            if not user_input:
+                continue
             
-            # 多轮对话循环
-            while True:
-                # 获取用户输入
-                user_input = input("\n你: ").strip()
-                
-                # 退出条件
-                if user_input.lower() in ["quit", "exit", "退出"]:
-                    print("\n再见！")
-                    break
-                
-                if not user_input:
-                    continue
-                
-                # 发送用户请求
-                result = await agent.ainvoke({
-                    "messages": [{"role": "user", "content": user_input}]
-                }, config=config)
-                
-                # 处理可能的多次中断
-                while result.get("__interrupt__"):
-                    result = await handle_human_review(result, config, agent)
-                
-                # 显示助手回复
-                print(f"\n助手: {result['messages'][-1].content}")
+            # 发送用户请求
+            result = agent.invoke({
+                "messages": [{"role": "user", "content": user_input}]
+            }, config=config)
+            
+            # 处理可能的多次中断
+            while result.get("__interrupt__"):
+                result = handle_human_review(result, config, agent)
+            
+            # 显示助手回复
+            print(f"\n助手: {result['messages'][-1].content}")
         
     except ValueError as e:
         print(f"配置错误: {e}")
@@ -259,4 +256,7 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
+
+
+
