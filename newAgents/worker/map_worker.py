@@ -29,7 +29,7 @@ from core.tool_context import context_tool, wrap_runnable_with_tool_context
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
-
+from core import LLMFactory, load_llm_config
 from Tools.gaode_map_tool import GaodeDrivingTool
 
 # 加载环境变量
@@ -65,17 +65,10 @@ def create_map_agent() -> tuple:
     Raises:
         ValueError: 当 DASHSCOPE_API_KEY 未设置时抛出
     """
-    # 验证 API Key
-    api_key = os.environ.get("DASHSCOPE_API_KEY")
-    if not api_key:
-        raise ValueError("DASHSCOPE_API_KEY 环境变量未设置")
-
-    # 初始化 DashScope 模型（使用 ChatOpenAI 封装）
-    model = ChatOpenAI(
-        model="qwen-plus",
-        openai_api_base="https://dashscope.aliyuncs.com/compatible-mode/v1",
-        openai_api_key=api_key
-    )
+    # 使用 LLM 工厂创建模型实例
+    # 从配置文件和环境变量加载配置
+    llm_config = load_llm_config()
+    model = LLMFactory.create_llm(llm_config)
 
     # 创建内存检查点保存器（Human-in-the-loop 必需）
     checkpointer = MemorySaver()

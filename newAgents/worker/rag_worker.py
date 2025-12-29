@@ -28,7 +28,7 @@ from dotenv import load_dotenv
 from core.tool_context import context_tool, wrap_runnable_with_tool_context
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
-
+from core import LLMFactory, load_llm_config
 from config.settings import get_settings
 from Tools.rag_tools import (
     identify_query_intent,
@@ -569,17 +569,10 @@ def create_rag_worker() -> tuple:
     if not api_key:
         raise ValueError("DASHSCOPE_API_KEY 环境变量未设置")
 
-    api_base = os.environ.get(
-        "DASHSCOPE_BASE_URL",
-        "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    )
-
-    # 初始化 DashScope 模型（使用 ChatOpenAI 封装）
-    model = ChatOpenAI(
-        model="qwen-plus",
-        openai_api_base=api_base,
-        openai_api_key=api_key
-    )
+    # 使用 LLM 工厂创建模型实例
+    # 从配置文件和环境变量加载配置
+    llm_config = load_llm_config()
+    model = LLMFactory.create_llm(llm_config)
 
     # 创建内存检查点保存器（支持状态持久化）
     checkpointer = MemorySaver()

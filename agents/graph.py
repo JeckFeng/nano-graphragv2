@@ -10,10 +10,11 @@ import asyncio
 import uuid
 import os
 from dotenv import load_dotenv
+from config.settings import get_settings
 # 加载环境变量
 load_dotenv()
 
-DB_URI = "postgresql://postgres:postgres@localhost:5432/langgraph_memory"
+DB_URI = get_settings().langgraph_memory_database_url
 # 验证 API Key
 api_key = os.environ.get("DASHSCOPE_API_KEY")
 if not api_key:

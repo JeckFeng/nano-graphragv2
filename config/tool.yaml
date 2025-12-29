@@ -7,7 +7,7 @@
 
 # 全局默认配置（所有工具的默认值）
 global_defaults:
-  timeout: 60.0          # 默认超时时间（秒）
+  timeout: 300.0          # 默认超时时间（秒）
   max_calls: 5           # 默认最大调用次数
 
 # 按 Agent 分类的工具配置

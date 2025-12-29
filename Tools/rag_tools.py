@@ -89,8 +89,11 @@ async def rewrite_query_and_extract_keywords(
     import re
     
     if llm is None:
-        from core.llm import get_llm
-        llm = get_llm()
+        from core import LLMFactory, load_llm_config
+        # 使用 LLM 工厂创建模型实例
+        # 从配置文件和环境变量加载配置
+        llm_config = load_llm_config()
+        llm = LLMFactory.create_llm(llm_config)
     
     prompt = ChatPromptTemplate.from_messages([
         ("system", """你是检索问题改写和关键词提取专家。
@@ -216,8 +219,11 @@ async def rewrite_query(
     from langchain_core.prompts import ChatPromptTemplate
     
     if llm is None:
-        from core.llm import get_llm
-        llm = get_llm()
+        from core import LLMFactory, load_llm_config
+        # 使用 LLM 工厂创建模型实例
+        # 从配置文件和环境变量加载配置
+        llm_config = load_llm_config()
+        llm = LLMFactory.create_llm(llm_config)
     
     prompt = ChatPromptTemplate.from_messages([
         ("system", "你是检索问题改写助手，请保留关键信息并提高可检索性。只返回改写后的问题，不要添加任何解释。"),
@@ -518,12 +524,16 @@ async def search_tables_by_keyword(keyword: str) -> List[Dict[str, Any]]:
         query = sql.SQL("""
             SELECT * FROM {}.rag_tables
             WHERE caption ILIKE %s
+               OR section ILIKE %s
                OR to_tsvector('english', context::text) @@ plainto_tsquery('english', %s)
             LIMIT 10
         """).format(sql.Identifier(schema))
         
+        # 第 1 个 %s → caption ILIKE %keyword%
+        # 第 2 个 %s → section ILIKE %keyword%
+        # 第 3 个 %s → plainto_tsquery('english', keyword)
         async with conn.cursor(row_factory=dict_row) as cursor:
-            await cursor.execute(query, (f"%{keyword}%", keyword))
+            await cursor.execute(query, (f"%{keyword}%", f"%{keyword}%",keyword))
             rows = await cursor.fetchall()
         
         await conn.close()
@@ -564,8 +574,12 @@ async def evaluate_retrieval_quality(
         return {"score": "low", "reason": "没有检索结果"}
     
     if llm is None:
-        from core.llm import get_llm
-        llm = get_llm()
+        from core import LLMFactory, load_llm_config
+        # 使用 LLM 工厂创建模型实例
+        # 从配置文件和环境变量加载配置
+        llm_config = load_llm_config()
+        llm = LLMFactory.create_llm(llm_config)
+
     
     from langchain_core.prompts import ChatPromptTemplate
     

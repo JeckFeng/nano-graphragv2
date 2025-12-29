@@ -19,7 +19,6 @@ Top Supervisor 管理两个团队代理：Team1 和 Team2。
 """
 
 import asyncio
-import os
 import uuid
 
 from deepagents import create_deep_agent, CompiledSubAgent
@@ -35,17 +34,13 @@ from agents.team2_agent import create_team2_agent
 # 导入 LLM 工厂
 from core import LLMFactory, load_llm_config
 from core.tool_context import wrap_runnable_with_tool_context
+from config.settings import get_settings
 
 # 加载环境变量
 load_dotenv()
 
-# 从环境变量构建数据库 URI
-DB_USER = os.environ.get("DB_USER", "postgres")
-DB_PASSWORD = os.environ.get("DB_PASSWORD", "postgres")
-DB_HOST = os.environ.get("DB_HOST", "localhost")
-DB_PORT = os.environ.get("DB_PORT", "5432")
-DB_NAME = os.environ.get("LANGGRAPH_MEMORY_DB", "langgraph_memory")
-DB_URI = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+# 从配置构建 LangGraph 记忆数据库 URI
+DB_URI = get_settings().langgraph_memory_database_url
 
 
 def create_top_supervisor(checkpointer) -> tuple:

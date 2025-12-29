@@ -54,8 +54,12 @@ class Settings(BaseSettings):
         description="PostgreSQL 端口",
     )
     db_name: str = Field(
+        default="mydb",
+        description="业务数据库名",
+    )
+    langgraph_memory_db: str = Field(
         default="langgraph_memory",
-        description="PostgreSQL 数据库名",
+        description="LangGraph 记忆数据库名",
     )
     db_user: str = Field(
         default="postgres",
@@ -204,6 +208,22 @@ class Settings(BaseSettings):
         # URL 编码密码以处理特殊字符
         encoded_password = quote_plus(password) if password else ""
         return f"postgresql://{self.db_user}:{encoded_password}@{self.db_host}:{self.db_port}/{self.db_name}"
+
+    @computed_field
+    @property
+    def langgraph_memory_database_url(self) -> str:
+        """
+        LangGraph 记忆库连接字符串
+
+        Returns:
+            str: LangGraph 记忆数据库连接字符串
+        """
+        password = self.db_password.get_secret_value()
+        encoded_password = quote_plus(password) if password else ""
+        return (
+            "postgresql://"
+            f"{self.db_user}:{encoded_password}@{self.db_host}:{self.db_port}/{self.langgraph_memory_db}"
+        )
     
     # -------------------------------------------------------------------------
     # 辅助属性
