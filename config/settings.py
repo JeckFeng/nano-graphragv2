@@ -166,6 +166,10 @@ class Settings(BaseSettings):
         le=10,
         description="GraphRAG 社区层级",
     )
+    rag_media_schema: str = Field(
+        default="rag_document",
+        description="RAG 媒体表所在的数据库 Schema",
+    )
     
     # -------------------------------------------------------------------------
     # 人工审核全局配置
