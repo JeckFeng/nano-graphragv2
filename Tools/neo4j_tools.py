@@ -22,6 +22,7 @@ import logging
 import os
 
 from config.settings import get_settings
+from core.tool_errors import ToolError
 
 
 logger = logging.getLogger(__name__)
@@ -99,10 +100,10 @@ async def check_neo4j_connection() -> Dict[str, Any]:
         graph = await _ensure_neo4j_graph()
         
         if graph is None:
-            return {
-                "connected": False,
-                "message": "Neo4j 未配置或连接失败",
-            }
+            raise ToolError(
+                "Neo4j 未配置或连接失败",
+                code="neo4j_not_configured",
+            )
         
         return {
             "connected": True,
@@ -111,10 +112,11 @@ async def check_neo4j_connection() -> Dict[str, Any]:
         
     except Exception as e:
         logger.error(f"Neo4j connection check failed: {e}")
-        return {
-            "connected": False,
-            "message": f"Neo4j 连接失败: {str(e)}",
-        }
+        raise ToolError(
+            "Neo4j 连接失败",
+            code="neo4j_connection_failed",
+            cause=e,
+        ) from e
 
 
 async def get_neo4j_schema() -> str:
@@ -131,7 +133,10 @@ async def get_neo4j_schema() -> str:
     graph = await _ensure_neo4j_graph()
     
     if graph is None:
-        return "Neo4j 未配置或连接失败"
+        raise ToolError(
+            "Neo4j 未配置或连接失败",
+            code="neo4j_not_configured",
+        )
     
     return _neo4j_schema
 
@@ -200,7 +205,11 @@ Cypher 查询:"""),
         
     except Exception as e:
         logger.error(f"Cypher generation failed: {e}")
-        return f"// Error: {str(e)}"
+        raise ToolError(
+            "Cypher 生成失败",
+            code="cypher_generation_failed",
+            cause=e,
+        ) from e
 
 
 async def validate_cypher(cypher: str) -> Dict[str, Any]:
@@ -220,10 +229,10 @@ async def validate_cypher(cypher: str) -> Dict[str, Any]:
     graph = await _ensure_neo4j_graph()
     
     if graph is None:
-        return {
-            "valid": False,
-            "errors": ["Neo4j 未配置或连接失败"],
-        }
+        raise ToolError(
+            "Neo4j 未配置或连接失败",
+            code="neo4j_not_configured",
+        )
     
     try:
         from neo4j.exceptions import CypherSyntaxError
@@ -245,10 +254,11 @@ async def validate_cypher(cypher: str) -> Dict[str, Any]:
         }
     except Exception as e:
         logger.warning(f"Cypher validation failed: {e}")
-        return {
-            "valid": False,
-            "errors": [str(e)],
-        }
+        raise ToolError(
+            "Cypher 验证失败",
+            code="cypher_validation_failed",
+            cause=e,
+        ) from e
 
 
 async def correct_cypher(
@@ -332,7 +342,10 @@ async def execute_cypher(cypher: str) -> Union[List[Dict], str]:
     graph = await _ensure_neo4j_graph()
     
     if graph is None:
-        return "Neo4j 未配置或连接失败"
+        raise ToolError(
+            "Neo4j 未配置或连接失败",
+            code="neo4j_not_configured",
+        )
     
     try:
         records = await asyncio.to_thread(graph.query, cypher)
@@ -345,7 +358,11 @@ async def execute_cypher(cypher: str) -> Union[List[Dict], str]:
             
     except Exception as e:
         logger.error(f"Cypher execution failed: {e}")
-        return f"执行失败: {str(e)}"
+        raise ToolError(
+            "Cypher 执行失败",
+            code="cypher_execute_failed",
+            cause=e,
+        ) from e
 
 
 async def execute_cypher_with_retry(
@@ -375,7 +392,10 @@ async def execute_cypher_with_retry(
     
     for attempt in range(1, max_retries + 1):
         # 先验证
-        validation = await validate_cypher(current_cypher)
+        try:
+            validation = await validate_cypher(current_cypher)
+        except ToolError:
+            raise
         
         if not validation["valid"]:
             if attempt < max_retries:
@@ -392,7 +412,19 @@ async def execute_cypher_with_retry(
                 break
         
         # 执行
-        result = await execute_cypher(current_cypher)
+        try:
+            result = await execute_cypher(current_cypher)
+        except ToolError as exc:
+            last_error = exc.to_dict()
+            if attempt < max_retries:
+                current_cypher = await correct_cypher(
+                    current_cypher,
+                    [str(last_error)],
+                    schema,
+                    llm,
+                )
+                continue
+            break
         
         if isinstance(result, list):
             return {
@@ -419,10 +451,12 @@ async def execute_cypher_with_retry(
                     llm,
                 )
     
-    return {
-        "success": False,
-        "result": None,
-        "error": f"执行失败（已重试 {max_retries} 次）: {last_error}",
-        "attempts": max_retries,
-        "final_cypher": current_cypher,
-    }
+    raise ToolError(
+        f"Cypher 执行失败（已重试 {max_retries} 次）",
+        code="cypher_execute_retry_failed",
+        details={
+            "attempts": max_retries,
+            "final_cypher": current_cypher,
+            "last_error": last_error,
+        },
+    )

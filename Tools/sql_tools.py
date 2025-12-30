@@ -21,6 +21,7 @@ import json
 import logging
 
 from config.settings import get_settings
+from core.tool_errors import ToolError
 
 
 logger = logging.getLogger(__name__)
@@ -69,11 +70,16 @@ async def check_database_connection() -> Dict[str, Any]:
         }
     except Exception as e:
         logger.error(f"数据库连接失败: {e}")
-        return {
-            "connected": False,
-            "message": f"数据库连接失败: {str(e)}",
-            "database": settings.db_name,
-        }
+        raise ToolError(
+            "数据库连接失败",
+            code="db_connection_failed",
+            details={
+                "database": settings.db_name,
+                "host": settings.db_host,
+                "port": settings.db_port,
+            },
+            cause=e,
+        ) from e
 
 
 async def get_database_schema(
@@ -183,11 +189,12 @@ async def get_database_schema(
         
     except Exception as e:
         logger.error(f"获取数据库结构失败: {e}")
-        return {
-            "success": False,
-            "content": "",
-            "error": f"数据库信息查询失败: {str(e)}",
-        }
+        raise ToolError(
+            "数据库信息查询失败",
+            code="db_schema_fetch_failed",
+            details={"schemas": schemas},
+            cause=e,
+        ) from e
 
 
 async def generate_sql(
@@ -268,11 +275,11 @@ SELECT movie_name FROM schema1.movie ORDER BY Number_views DESC LIMIT 5;
         
     except Exception as e:
         logger.error(f"SQL 生成失败: {e}")
-        return {
-            "success": False,
-            "content": "",
-            "error": f"SQL 生成失败: {str(e)}",
-        }
+        raise ToolError(
+            "SQL 生成失败",
+            code="sql_generation_failed",
+            cause=e,
+        ) from e
 
 
 async def validate_sql(sql: str) -> Dict[str, Any]:
@@ -402,11 +409,11 @@ async def correct_sql(
         
     except Exception as e:
         logger.error(f"SQL 修正失败: {e}")
-        return {
-            "success": False,
-            "content": None,
-            "error": f"SQL 修正失败: {str(e)}",
-        }
+        raise ToolError(
+            "SQL 修正失败",
+            code="sql_correction_failed",
+            cause=e,
+        ) from e
 
 
 async def execute_sql(query: str, user_id: str = "default") -> Dict[str, Any]:
@@ -459,12 +466,11 @@ async def execute_sql(query: str, user_id: str = "default") -> Dict[str, Any]:
         
     except Exception as e:
         logger.error(f"SQL 执行失败: {e}")
-        return {
-            "success": False,
-            "content": "",
-            "error": f"查询失败: {str(e)}",
-            "row_count": 0,
-        }
+        raise ToolError(
+            "SQL 执行失败",
+            code="sql_execute_failed",
+            cause=e,
+        ) from e
 
 
 async def execute_sql_with_retry(
@@ -494,31 +500,44 @@ async def execute_sql_with_retry(
     last_error = None
     
     for attempt in range(1, max_retries + 1):
-        result = await execute_sql(current_sql)
+        try:
+            result = await execute_sql(current_sql)
+        except ToolError as exc:
+            last_error = exc.to_dict()
+            logger.warning(f"SQL 执行失败（第 {attempt} 次）: {last_error}")
+            result = None
         
-        if result["success"]:
+        if result and result.get("success"):
             return {
                 **result,
                 "attempts": attempt,
                 "final_sql": current_sql,
             }
         
-        last_error = result["error"]
-        logger.warning(f"SQL 执行失败（第 {attempt} 次）: {last_error}")
+        if result:
+            last_error = result.get("error")
+            logger.warning(f"SQL 执行失败（第 {attempt} 次）: {last_error}")
         
         if attempt < max_retries:
             # 尝试修正 SQL
-            correction = await correct_sql(current_sql, last_error, database_info, llm)
-            if correction["success"]:
+            try:
+                correction = await correct_sql(current_sql, str(last_error), database_info, llm)
+            except ToolError as exc:
+                last_error = exc.to_dict()
+                break
+            if correction.get("success"):
                 current_sql = correction["content"]
-                logger.info(f"SQL 已修正，准备重试")
+                logger.info("SQL 已修正，准备重试")
             else:
+                last_error = correction.get("error")
                 break
     
-    return {
-        "success": False,
-        "content": "",
-        "error": f"SQL 执行失败（已重试 {max_retries} 次）: {last_error}",
-        "attempts": max_retries,
-        "final_sql": current_sql,
-    }
+    raise ToolError(
+        f"SQL 执行失败（已重试 {max_retries} 次）",
+        code="sql_execute_retry_failed",
+        details={
+            "attempts": max_retries,
+            "final_sql": current_sql,
+            "last_error": last_error,
+        },
+    )

@@ -1,3 +1,9 @@
+"""
+高德地图工具模块。
+
+提供驾车路线规划工具，用于调用高德地图 API 获取行车路线数据。
+"""
+
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional, Tuple
 import aiohttp
@@ -7,6 +13,7 @@ import logging
 from dotenv import load_dotenv
 
 from Tools.baseTool import BaseTool
+from core.tool_errors import ToolError
 
 # 加载环境变量
 load_dotenv()
@@ -142,12 +149,17 @@ class GaodeDrivingTool(BaseTool):
             # 设置错误状态
             self.isSuccess = False
             self.error = str(e)
-            self.message = f"驾车路线规划失败{e}"
-            return {
-                "success": self.isSuccess,
-                "message": self.message,
-                "error": self.error
-            }
+            self.message = f"驾车路线规划失败: {self.error}"
+            raise ToolError(
+                "驾车路线规划失败",
+                code="gaode_driving_route_failed",
+                details={
+                    "origin": origin,
+                    "destination": destination,
+                    "reason": self.error,
+                },
+                cause=e,
+            ) from e
 
 
 if __name__ == "__main__":

@@ -26,6 +26,7 @@ import os
 import pandas as pd
 
 from config.settings import get_settings
+from core.tool_errors import ToolError
 
 logger = logging.getLogger(__name__)
 
@@ -338,7 +339,11 @@ async def graphrag_local_search(
             config_path = config_path or default_config
         
         if root is None or not root.exists():
-            return "[graphrag_local_search_failed] GraphRAG root not found"
+            raise ToolError(
+                "GraphRAG 根目录不存在",
+                code="graphrag_root_not_found",
+                details={"root": str(root) if root else None},
+            )
         
         # 加载配置
         cfg = load_config(root, config_path)
@@ -353,7 +358,11 @@ async def graphrag_local_search(
         covariates = _read_parquet_safe(output_dir / "covariates.parquet")
         
         if entities is None or communities is None or community_reports is None:
-            return "[graphrag_local_search_failed] Missing required parquet files"
+            raise ToolError(
+                "GraphRAG 必要数据文件缺失",
+                code="graphrag_missing_parquet",
+                details={"root": str(root)},
+            )
         
         # 执行本地搜索
         resp, _ = await local_search(
@@ -374,7 +383,11 @@ async def graphrag_local_search(
         
     except Exception as e:
         logger.error(f"GraphRAG local search failed: {e}")
-        return f"[graphrag_local_search_failed] {str(e)}"
+        raise ToolError(
+            "GraphRAG 本地检索失败",
+            code="graphrag_local_search_failed",
+            cause=e,
+        ) from e
 
 
 async def graphrag_global_search(
@@ -406,7 +419,11 @@ async def graphrag_global_search(
             config_path = config_path or default_config
         
         if root is None or not root.exists():
-            return "[graphrag_global_search_failed] GraphRAG root not found"
+            raise ToolError(
+                "GraphRAG 根目录不存在",
+                code="graphrag_root_not_found",
+                details={"root": str(root) if root else None},
+            )
         
         # 加载配置
         cfg = load_config(root, config_path)
@@ -418,7 +435,11 @@ async def graphrag_global_search(
         community_reports = _read_parquet_safe(output_dir / "community_reports.parquet")
         
         if entities is None or communities is None or community_reports is None:
-            return "[graphrag_global_search_failed] Missing required parquet files"
+            raise ToolError(
+                "GraphRAG 必要数据文件缺失",
+                code="graphrag_missing_parquet",
+                details={"root": str(root)},
+            )
         
         # 执行全局搜索
         resp, _ = await global_search(
@@ -437,7 +458,11 @@ async def graphrag_global_search(
         
     except Exception as e:
         logger.error(f"GraphRAG global search failed: {e}")
-        return f"[graphrag_global_search_failed] {str(e)}"
+        raise ToolError(
+            "GraphRAG 全局检索失败",
+            code="graphrag_global_search_failed",
+            cause=e,
+        ) from e
 
 
 async def search_images_by_keyword(keyword: str) -> List[Dict[str, Any]]:
@@ -492,7 +517,12 @@ async def search_images_by_keyword(keyword: str) -> List[Dict[str, Any]]:
         
     except Exception as e:
         logger.error(f"图片检索失败: {e}")
-        return [{"error": str(e)}]
+        raise ToolError(
+            "图片检索失败",
+            code="rag_image_search_failed",
+            details={"keyword": keyword, "schema": schema},
+            cause=e,
+        ) from e
 
 
 async def search_tables_by_keyword(keyword: str) -> List[Dict[str, Any]]:
@@ -533,7 +563,7 @@ async def search_tables_by_keyword(keyword: str) -> List[Dict[str, Any]]:
         # 第 2 个 %s → section ILIKE %keyword%
         # 第 3 个 %s → plainto_tsquery('english', keyword)
         async with conn.cursor(row_factory=dict_row) as cursor:
-            await cursor.execute(query, (f"%{keyword}%", f"%{keyword}%",keyword))
+            await cursor.execute(query, (f"%{keyword}%",f"%{keyword}%",keyword))
             rows = await cursor.fetchall()
         
         await conn.close()
@@ -550,7 +580,12 @@ async def search_tables_by_keyword(keyword: str) -> List[Dict[str, Any]]:
         
     except Exception as e:
         logger.error(f"表格检索失败: {e}")
-        return [{"error": str(e)}]
+        raise ToolError(
+            "表格检索失败",
+            code="rag_table_search_failed",
+            details={"keyword": keyword, "schema": schema},
+            cause=e,
+        ) from e
 
 
 async def evaluate_retrieval_quality(

@@ -59,3 +59,5 @@
 2025-12-29 16:14:06.0587 - WARNING - graphrag.query.structured_search.global_search.search - Warning: All map responses have score 0 (i.e., no relevant information found from the dataset), returning a canned 'I do not know' answer. You can try enabling `allow_general_knowledge` to encourage the LLM to incorporate relevant general knowledge, at the risk of increasing hallucinations.
 2025-12-29 16:40:05.0162 - WARNING - graphrag.query.context_builder.community_context - Warning: No community records added when building community context.
 2025-12-29 16:40:05.0171 - WARNING - graphrag.query.structured_search.local_search.mixed_context - Reached token limit - reverting to previous context state
+2025-12-29 18:06:37.0213 - WARNING - graphrag.query.context_builder.community_context - Warning: No community records added when building community context.
+2025-12-29 18:06:37.0232 - WARNING - graphrag.query.structured_search.local_search.mixed_context - Reached token limit - reverting to previous context state

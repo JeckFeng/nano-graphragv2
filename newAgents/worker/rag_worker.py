@@ -21,11 +21,12 @@ import asyncio
 import json
 import os
 import uuid
-from typing import Literal
+from typing import Any, Dict, Literal
 
 from deepagents import create_deep_agent
 from dotenv import load_dotenv
 from core.tool_context import context_tool, wrap_runnable_with_tool_context
+from core.tool_errors import ToolError
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from core import LLMFactory, load_llm_config
@@ -169,6 +170,22 @@ RAG_WORKER_PROMPT = """你是一个可调度多种工具的中文 ReAct 检索�
 def _get_graphrag_community_level() -> int:
     settings = get_settings()
     return settings.graphrag_community_level or 3
+
+
+def _format_tool_error(error: Exception) -> Dict[str, Any]:
+    """将工具异常转换为结构化错误信息。
+
+    Args:
+        error: 捕获到的异常实例
+
+    Returns:
+        Dict[str, Any]: 结构化错误字典
+    """
+    if isinstance(error, ToolError):
+        return error.to_dict()
+    if isinstance(error, dict) and "error" in error:
+        return error
+    return {"error": str(error)}
 
 
 @context_tool
@@ -323,25 +340,38 @@ async def parallel_execute_queries(queries_with_intents_json: str) -> str:
 
         try:
             if intent == "text_query":
-                result = await graphrag_local_search(query, community_level=community_level)
-                if result.startswith("[graphrag_local_search_failed]"):
-                    result = await graphrag_global_search(query)
+                try:
+                    result = await graphrag_local_search(query, community_level=community_level)
+                    tool_used = "search_local"
+                except ToolError:
+                    try:
+                        result = await graphrag_global_search(query)
+                        tool_used = "search_global"
+                    except ToolError as exc:
+                        return {
+                            "query": query,
+                            "intent": intent,
+                            "result": None,
+                            "tool_used": "search_global",
+                            "error": _format_tool_error(exc),
+                        }
                 return {
                     "query": query,
                     "intent": intent,
                     "result": result,
-                    "tool_used": "search_local" if not result.startswith("[graphrag_global_search") else "search_global",
+                    "tool_used": tool_used,
                     "error": None,
                 }
             if intent == "image_query":
-                results = await search_images_by_keyword(query)
-                if results and "error" in results[0]:
+                try:
+                    results = await search_images_by_keyword(query)
+                except ToolError as exc:
                     return {
                         "query": query,
                         "intent": intent,
                         "result": None,
                         "tool_used": "search_images",
-                        "error": results[0]["error"],
+                        "error": _format_tool_error(exc),
                     }
                 uris = [r.get("uri") for r in results if r.get("uri")]
                 result_text = f"找到 {len(uris)} 张相关图片:\n"
@@ -355,14 +385,15 @@ async def parallel_execute_queries(queries_with_intents_json: str) -> str:
                     "error": None,
                 }
             if intent == "table_query":
-                results = await search_tables_by_keyword(query)
-                if results and "error" in results[0]:
+                try:
+                    results = await search_tables_by_keyword(query)
+                except ToolError as exc:
                     return {
                         "query": query,
                         "intent": intent,
                         "result": None,
                         "tool_used": "search_tables",
-                        "error": results[0]["error"],
+                        "error": _format_tool_error(exc),
                     }
                 result_text = f"找到 {len(results)} 个相关表格:\n"
                 for i, tbl in enumerate(results, 1):
@@ -392,7 +423,7 @@ async def parallel_execute_queries(queries_with_intents_json: str) -> str:
                 "intent": intent,
                 "result": None,
                 "tool_used": "unknown",
-                "error": str(exc),
+                "error": _format_tool_error(exc),
             }
 
     tasks = [execute_single_query(qi) for qi in queries_with_intents]
@@ -406,7 +437,7 @@ async def parallel_execute_queries(queries_with_intents_json: str) -> str:
                 "intent": queries_with_intents[i].get("intent", "text_query") if i < len(queries_with_intents) else "text_query",
                 "result": None,
                 "tool_used": "unknown",
-                "error": str(result),
+                "error": _format_tool_error(result),
             })
         else:
             processed_results.append(result)
@@ -433,8 +464,6 @@ async def search_local(query: str, community_level: int = 0) -> str:
     if community_level <= 0:
         community_level = _get_graphrag_community_level()
     result = await graphrag_local_search(query, community_level)
-    if result.startswith("[graphrag_local_search_failed]"):
-        return f"本地检索失败: {result}"
     return f"本地检索结果:\n{result}"
 
 
@@ -449,8 +478,6 @@ async def search_global(query: str) -> str:
         检索结果
     """
     result = await graphrag_global_search(query)
-    if result.startswith("[graphrag_global_search_failed]"):
-        return f"全局检索失败: {result}"
     return f"全局检索结果:\n{result}"
 
 
@@ -468,9 +495,6 @@ async def search_images(keyword: str) -> str:
 
     if not results:
         return "未找到相关图片"
-
-    if results and "error" in results[0]:
-        return f"图片检索失败: {results[0]['error']}"
 
     uris = [r.get("uri") for r in results if r.get("uri")]
     if not uris:
@@ -497,9 +521,6 @@ async def search_tables(keyword: str) -> str:
 
     if not results:
         return "未找到相关表格"
-
-    if results and "error" in results[0]:
-        return f"表格检索失败: {results[0]['error']}"
 
     output = f"找到 {len(results)} 个相关表格:\n"
     for i, tbl in enumerate(results, 1):

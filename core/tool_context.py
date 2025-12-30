@@ -35,6 +35,7 @@ from langchain_core.tools import tool
 
 from core.tool_config import get_tool_config
 from core.logger_config import get_logger_config
+from core.tool_errors import ToolError
 
 logger = logging.getLogger(__name__)
 
@@ -389,6 +390,17 @@ def _inject_context(
                 )
                 # 不抛异常，交给上层 Agent 自行处理
                 return result
+            except ToolError as exc:
+                result = exc.to_dict()
+                _record_log(
+                    tool_name=tool_name,
+                    function_type=function_type,
+                    args=args,
+                    kwargs=kwargs,
+                    result=exc.to_log_dict(),
+                    is_success=False,
+                )
+                return result
             except Exception as e:
                 result = {
                     "error": repr(e),
@@ -460,6 +472,17 @@ def _inject_context(
                     args=args,
                     kwargs=kwargs,
                     result=result,
+                    is_success=False,
+                )
+                return result
+            except ToolError as exc:
+                result = exc.to_dict()
+                _record_log(
+                    tool_name=tool_name,
+                    function_type=function_type,
+                    args=args,
+                    kwargs=kwargs,
+                    result=exc.to_log_dict(),
                     is_success=False,
                 )
                 return result
