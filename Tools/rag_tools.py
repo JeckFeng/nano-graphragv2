@@ -27,6 +27,7 @@ import pandas as pd
 
 from config.settings import get_settings
 from core.tool_errors import ToolError
+from Tools.tool_spec import ToolSpec
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +79,9 @@ async def rewrite_query_and_extract_keywords(
         - rewrite_query_list: List[str] - 改写后的查询列表（最多 max_rewrites 个）
         - query_keywords_list: List[str] - 关键词列表（最多 max_keywords 个）
         - original_query: str - 原始查询
+
+    Notes:
+        当 LLM 调用失败时返回降级结果，不抛 ToolError。
         
     Example:
         >>> result = await rewrite_query_and_extract_keywords("此次山洪灾害风险隐患调查涉及多少个防治对象？")
@@ -216,6 +220,9 @@ async def rewrite_query(
         
     Returns:
         改写后的查询字符串
+
+    Notes:
+        当 LLM 调用失败时返回原始查询，不抛 ToolError。
     """
     from langchain_core.prompts import ChatPromptTemplate
     
@@ -603,6 +610,9 @@ async def evaluate_retrieval_quality(
         
     Returns:
         Dict 包含 score ("high" | "low") 和 reason
+
+    Notes:
+        当评估失败时使用启发式结果，不抛 ToolError。
     """
     # 快速空结果判断
     if not retrieved or not str(retrieved).strip():
@@ -690,6 +700,143 @@ def json_to_markdown_table(table_data: Any) -> str:
 # 导出
 # =============================================================================
 
+IDENTIFY_QUERY_INTENT_SPEC = ToolSpec(
+    name="identify_query_intent",
+    description="根据关键词识别查询意图（文本/图片/表格）。",
+    parameters={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "用户查询字符串。"},
+        },
+        "required": ["query"],
+        "additionalProperties": False,
+    },
+    handler=identify_query_intent,
+)
+
+REWRITE_QUERY_AND_EXTRACT_KEYWORDS_SPEC = ToolSpec(
+    name="rewrite_query_and_extract_keywords",
+    description="改写查询并提取关键词，用于提高检索召回率。",
+    parameters={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "原始查询字符串。"},
+            "llm": {"type": "object", "description": "可选的 LLM 实例。"},
+            "max_rewrites": {"type": "integer", "description": "最大改写数量。"},
+            "max_keywords": {"type": "integer", "description": "最大关键词数量。"},
+        },
+        "required": ["query"],
+        "additionalProperties": False,
+    },
+    handler=rewrite_query_and_extract_keywords,
+)
+
+REWRITE_QUERY_SPEC = ToolSpec(
+    name="rewrite_query",
+    description="改写查询以提高检索效果（已弃用）。",
+    parameters={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "原始查询字符串。"},
+            "llm": {"type": "object", "description": "可选的 LLM 实例。"},
+        },
+        "required": ["query"],
+        "additionalProperties": False,
+    },
+    handler=rewrite_query,
+)
+
+GRAPHRAG_LOCAL_SEARCH_SPEC = ToolSpec(
+    name="graphrag_local_search",
+    description="使用 GraphRAG 进行本地检索。",
+    parameters={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "查询字符串。"},
+            "community_level": {"type": "integer", "description": "社区层级。"},
+            "root": {"type": "string", "description": "GraphRAG 根目录路径。"},
+            "config_path": {"type": "string", "description": "GraphRAG 配置文件路径。"},
+        },
+        "required": ["query"],
+        "additionalProperties": False,
+    },
+    handler=graphrag_local_search,
+)
+
+GRAPHRAG_GLOBAL_SEARCH_SPEC = ToolSpec(
+    name="graphrag_global_search",
+    description="使用 GraphRAG 进行全局检索。",
+    parameters={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "查询字符串。"},
+            "root": {"type": "string", "description": "GraphRAG 根目录路径。"},
+            "config_path": {"type": "string", "description": "GraphRAG 配置文件路径。"},
+        },
+        "required": ["query"],
+        "additionalProperties": False,
+    },
+    handler=graphrag_global_search,
+)
+
+SEARCH_IMAGES_BY_KEYWORD_SPEC = ToolSpec(
+    name="search_images_by_keyword",
+    description="在 PostgreSQL 中按关键词检索图片信息。",
+    parameters={
+        "type": "object",
+        "properties": {
+            "keyword": {"type": "string", "description": "搜索关键词。"},
+        },
+        "required": ["keyword"],
+        "additionalProperties": False,
+    },
+    handler=search_images_by_keyword,
+)
+
+SEARCH_TABLES_BY_KEYWORD_SPEC = ToolSpec(
+    name="search_tables_by_keyword",
+    description="在 PostgreSQL 中按关键词检索表格信息。",
+    parameters={
+        "type": "object",
+        "properties": {
+            "keyword": {"type": "string", "description": "搜索关键词。"},
+        },
+        "required": ["keyword"],
+        "additionalProperties": False,
+    },
+    handler=search_tables_by_keyword,
+)
+
+EVALUATE_RETRIEVAL_QUALITY_SPEC = ToolSpec(
+    name="evaluate_retrieval_quality",
+    description="评估检索结果质量。",
+    parameters={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "用户查询。"},
+            "retrieved": {"type": "string", "description": "检索结果。"},
+            "llm": {"type": "object", "description": "可选的 LLM 实例。"},
+        },
+        "required": ["query", "retrieved"],
+        "additionalProperties": False,
+    },
+    handler=evaluate_retrieval_quality,
+)
+
+JSON_TO_MARKDOWN_TABLE_SPEC = ToolSpec(
+    name="json_to_markdown_table",
+    description="将 JSON 表格数据转换为 Markdown 格式。",
+    parameters={
+        "type": "object",
+        "properties": {
+            "table_data": {"type": "object", "description": "表格 JSON 数据。"},
+        },
+        "required": ["table_data"],
+        "additionalProperties": False,
+    },
+    handler=json_to_markdown_table,
+)
+
 __all__ = [
     # 意图识别
     "identify_query_intent",
@@ -706,4 +853,14 @@ __all__ = [
     "evaluate_retrieval_quality",
     # 工具函数
     "json_to_markdown_table",
+    # ToolSpec
+    "IDENTIFY_QUERY_INTENT_SPEC",
+    "REWRITE_QUERY_AND_EXTRACT_KEYWORDS_SPEC",
+    "REWRITE_QUERY_SPEC",
+    "GRAPHRAG_LOCAL_SEARCH_SPEC",
+    "GRAPHRAG_GLOBAL_SEARCH_SPEC",
+    "SEARCH_IMAGES_BY_KEYWORD_SPEC",
+    "SEARCH_TABLES_BY_KEYWORD_SPEC",
+    "EVALUATE_RETRIEVAL_QUALITY_SPEC",
+    "JSON_TO_MARKDOWN_TABLE_SPEC",
 ]

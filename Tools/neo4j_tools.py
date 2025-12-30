@@ -23,6 +23,7 @@ import os
 
 from config.settings import get_settings
 from core.tool_errors import ToolError
+from Tools.tool_spec import ToolSpec
 
 
 logger = logging.getLogger(__name__)
@@ -95,6 +96,9 @@ async def check_neo4j_connection() -> Dict[str, Any]:
         Dict 包含:
             - connected: bool 是否连接成功
             - message: str 连接状态消息
+
+    Raises:
+        ToolError: 当连接失败时抛出。
     """
     try:
         graph = await _ensure_neo4j_graph()
@@ -127,6 +131,9 @@ async def get_neo4j_schema() -> str:
     
     Returns:
         Schema 字符串
+
+    Raises:
+        ToolError: 当连接失败或未配置时抛出。
     """
     global _neo4j_schema
     
@@ -156,6 +163,9 @@ async def generate_cypher(
         
     Returns:
         生成的 Cypher 语句
+
+    Raises:
+        ToolError: 当生成失败时抛出。
     """
     from langchain_core.prompts import ChatPromptTemplate
     from langchain_core.output_parsers import StrOutputParser
@@ -225,6 +235,12 @@ async def validate_cypher(cypher: str) -> Dict[str, Any]:
         Dict 包含:
             - valid: bool 是否有效
             - errors: List[str] 错误列表
+
+    Raises:
+        ToolError: 当验证过程出现异常时抛出。
+
+    Notes:
+        Cypher 语法错误会以 valid=False 的结果返回，不视为工具执行失败。
     """
     graph = await _ensure_neo4j_graph()
     
@@ -278,6 +294,9 @@ async def correct_cypher(
         
     Returns:
         修正后的 Cypher 语句
+
+    Raises:
+        ToolError: 当修正失败时抛出
     """
     from langchain_core.prompts import ChatPromptTemplate
     from langchain_core.output_parsers import StrOutputParser
@@ -325,7 +344,11 @@ Cypher:
         
     except Exception as e:
         logger.error(f"Cypher correction failed: {e}")
-        return cypher  # 返回原始语句
+        raise ToolError(
+            "Cypher 修正失败",
+            code="cypher_correction_failed",
+            cause=e,
+        ) from e
 
 
 
@@ -338,6 +361,9 @@ async def execute_cypher(cypher: str) -> Union[List[Dict], str]:
         
     Returns:
         查询结果列表或错误信息字符串
+
+    Raises:
+        ToolError: 当执行失败时抛出。
     """
     graph = await _ensure_neo4j_graph()
     
@@ -382,10 +408,12 @@ async def execute_cypher_with_retry(
         
     Returns:
         Dict 包含:
-            - success: bool 是否成功
             - result: 查询结果
             - attempts: int 尝试次数
             - final_cypher: str 最终执行的 Cypher
+
+    Raises:
+        ToolError: 当重试失败时抛出
     """
     current_cypher = cypher
     last_error = None
@@ -428,28 +456,25 @@ async def execute_cypher_with_retry(
         
         if isinstance(result, list):
             return {
-                "success": True,
                 "result": result,
                 "attempts": attempt,
                 "final_cypher": current_cypher,
             }
-        elif isinstance(result, str) and not result.startswith("执行失败"):
+        if isinstance(result, str) and not result.startswith("执行失败"):
             return {
-                "success": True,
                 "result": result,
                 "attempts": attempt,
                 "final_cypher": current_cypher,
             }
-        else:
-            last_error = result
-            if attempt < max_retries:
-                # 尝试修正
-                current_cypher = await correct_cypher(
-                    current_cypher,
-                    [str(last_error)],
-                    schema,
-                    llm,
-                )
+
+        last_error = result
+        if attempt < max_retries:
+            current_cypher = await correct_cypher(
+                current_cypher,
+                [str(last_error)],
+                schema,
+                llm,
+            )
     
     raise ToolError(
         f"Cypher 执行失败（已重试 {max_retries} 次）",
@@ -460,3 +485,128 @@ async def execute_cypher_with_retry(
             "last_error": last_error,
         },
     )
+
+
+CHECK_NEO4J_CONNECTION_SPEC = ToolSpec(
+    name="check_neo4j_connection",
+    description="检查 Neo4j 数据库连接状态。",
+    parameters={
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": False,
+    },
+    handler=check_neo4j_connection,
+)
+
+GET_NEO4J_SCHEMA_SPEC = ToolSpec(
+    name="get_neo4j_schema",
+    description="获取 Neo4j 数据库 Schema 信息。",
+    parameters={
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": False,
+    },
+    handler=get_neo4j_schema,
+)
+
+GENERATE_CYPHER_SPEC = ToolSpec(
+    name="generate_cypher",
+    description="根据问题与 Schema 生成 Cypher 查询语句。",
+    parameters={
+        "type": "object",
+        "properties": {
+            "question": {"type": "string", "description": "用户问题。"},
+            "schema": {"type": "string", "description": "数据库 Schema。"},
+            "llm": {"type": "object", "description": "可选的 LLM 实例。"},
+        },
+        "required": ["question", "schema"],
+        "additionalProperties": False,
+    },
+    handler=generate_cypher,
+)
+
+VALIDATE_CYPHER_SPEC = ToolSpec(
+    name="validate_cypher",
+    description="验证 Cypher 语句语法是否正确。",
+    parameters={
+        "type": "object",
+        "properties": {
+            "cypher": {"type": "string", "description": "待验证的 Cypher 语句。"},
+        },
+        "required": ["cypher"],
+        "additionalProperties": False,
+    },
+    handler=validate_cypher,
+)
+
+CORRECT_CYPHER_SPEC = ToolSpec(
+    name="correct_cypher",
+    description="根据错误信息修正 Cypher 语句。",
+    parameters={
+        "type": "object",
+        "properties": {
+            "cypher": {"type": "string", "description": "原始 Cypher 语句。"},
+            "errors": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "错误信息列表。",
+            },
+            "schema": {"type": "string", "description": "数据库 Schema。"},
+            "llm": {"type": "object", "description": "可选的 LLM 实例。"},
+        },
+        "required": ["cypher", "errors", "schema"],
+        "additionalProperties": False,
+    },
+    handler=correct_cypher,
+)
+
+EXECUTE_CYPHER_SPEC = ToolSpec(
+    name="execute_cypher",
+    description="执行 Cypher 查询并返回结果。",
+    parameters={
+        "type": "object",
+        "properties": {
+            "cypher": {"type": "string", "description": "Cypher 查询语句。"},
+        },
+        "required": ["cypher"],
+        "additionalProperties": False,
+    },
+    handler=execute_cypher,
+)
+
+EXECUTE_CYPHER_WITH_RETRY_SPEC = ToolSpec(
+    name="execute_cypher_with_retry",
+    description="执行 Cypher 查询，失败时自动修正并重试。",
+    parameters={
+        "type": "object",
+        "properties": {
+            "cypher": {"type": "string", "description": "Cypher 查询语句。"},
+            "schema": {"type": "string", "description": "数据库 Schema。"},
+            "max_retries": {"type": "integer", "description": "最大重试次数。"},
+            "llm": {"type": "object", "description": "可选的 LLM 实例。"},
+        },
+        "required": ["cypher", "schema"],
+        "additionalProperties": False,
+    },
+    handler=execute_cypher_with_retry,
+)
+
+
+__all__ = [
+    "check_neo4j_connection",
+    "get_neo4j_schema",
+    "generate_cypher",
+    "validate_cypher",
+    "correct_cypher",
+    "execute_cypher",
+    "execute_cypher_with_retry",
+    "CHECK_NEO4J_CONNECTION_SPEC",
+    "GET_NEO4J_SCHEMA_SPEC",
+    "GENERATE_CYPHER_SPEC",
+    "VALIDATE_CYPHER_SPEC",
+    "CORRECT_CYPHER_SPEC",
+    "EXECUTE_CYPHER_SPEC",
+    "EXECUTE_CYPHER_WITH_RETRY_SPEC",
+]

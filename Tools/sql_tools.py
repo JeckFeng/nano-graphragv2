@@ -22,6 +22,7 @@ import logging
 
 from config.settings import get_settings
 from core.tool_errors import ToolError
+from Tools.tool_spec import ToolSpec
 
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,9 @@ async def check_database_connection() -> Dict[str, Any]:
             - connected: bool 是否连接成功
             - message: str 连接状态消息
             - database: str 数据库名称
+
+    Raises:
+        ToolError: 当连接失败时抛出。
     """
     settings = get_settings()
     
@@ -84,30 +88,26 @@ async def check_database_connection() -> Dict[str, Any]:
 
 async def get_database_schema(
     schemas: Optional[List[str]] = None,
-    user_id: str = "default",
-) -> Dict[str, Any]:
+) -> str:
     """
-    获取数据库结构信息
-    
+    获取数据库结构信息。
+
     Args:
-        schemas: 要查询的 schema 列表，默认查询 hazard_affected_body 和 disaster_risk
-        user_id: 用户 ID，用于权限检查
-        
+        schemas: 要查询的 schema 列表，默认查询 rag_document、public、agent_backend。
     Returns:
-        Dict 包含:
-            - success: bool 是否成功
-            - content: str JSON 格式的数据库结构信息
-            - error: str 错误信息（失败时）
-            
+        JSON 字符串格式的数据库结构信息。
+
+    Raises:
+        ToolError: 当查询失败时抛出。
     """
     settings = get_settings()
-    
+
     if schemas is None:
-        schemas = ["rag_document", "public","agent_backend"]
-    
+        schemas = ["rag_document", "public", "agent_backend"]
+
     try:
         from psycopg import AsyncConnection
-        
+
         conn = await AsyncConnection.connect(
             host=settings.db_host,
             port=settings.db_port,
@@ -115,26 +115,28 @@ async def get_database_schema(
             user=settings.db_user,
             password=settings.db_password.get_secret_value(),
         )
-        
-        schema_data = {}
-        have_schemas = []
-        
+
+        schema_data: Dict[str, Any] = {}
+        have_schemas: List[str] = []
+
         async with conn.cursor() as cursor:
-            # 获取存在的 schema
-            placeholders = ','.join(['%s'] * len(schemas))
-            await cursor.execute(f"""
-                SELECT nspname 
-                FROM pg_namespace 
+            placeholders = ",".join(["%s"] * len(schemas))
+            await cursor.execute(
+                f"""
+                SELECT nspname
+                FROM pg_namespace
                 WHERE nspname IN ({placeholders})
                 ORDER BY nspname;
-            """, tuple(schemas))
+            """,
+                tuple(schemas),
+            )
             existing_schemas = [row[0] for row in await cursor.fetchall()]
-            
+
             for schema in existing_schemas:
                 have_schemas.append(schema)
-                
-                # 获取表信息
-                await cursor.execute("""
+
+                await cursor.execute(
+                    """
                     SELECT c.relname AS table_name,
                            COALESCE(obj_description(c.oid, 'pg_class'), '无注释') AS table_comment
                     FROM pg_class c
@@ -142,13 +144,15 @@ async def get_database_schema(
                     WHERE c.relkind = 'r'
                       AND n.nspname = %s
                     ORDER BY table_name;
-                """, (schema,))
+                """,
+                    (schema,),
+                )
                 tables = await cursor.fetchall()
-                
+
                 schema_tables = []
                 for table_name, table_comment in tables:
-                    # 获取列信息
-                    await cursor.execute("""
+                    await cursor.execute(
+                        """
                         SELECT a.attname AS column_name,
                                COALESCE(col_description(a.attrelid, a.attnum), '无注释') AS column_comment
                         FROM pg_attribute a
@@ -159,36 +163,36 @@ async def get_database_schema(
                           AND a.attnum > 0
                           AND NOT a.attisdropped
                         ORDER BY a.attnum;
-                    """, (table_name, schema))
+                    """,
+                        (table_name, schema),
+                    )
                     columns = await cursor.fetchall()
-                    
+
                     column_list = [
                         {"name": col_name, "column_comment": col_comment}
                         for col_name, col_comment in columns
                     ]
-                    
-                    schema_tables.append({
-                        "table_name": table_name,
-                        "table_comment": table_comment,
-                        "columns": column_list,
-                    })
-                
+
+                    schema_tables.append(
+                        {
+                            "table_name": table_name,
+                            "table_comment": table_comment,
+                            "columns": column_list,
+                        }
+                    )
+
                 schema_data[schema] = schema_tables
-        
+
         schema_data["have_schemas"] = have_schemas
-        
+
         await conn.close()
-        
-        logger.info(f"获取数据库结构成功，共 {len(have_schemas)} 个 schema")
-        
-        return {
-            "success": True,
-            "content": json.dumps(schema_data, ensure_ascii=False, indent=2),
-            "error": None,
-        }
-        
+
+        logger.info("获取数据库结构成功，共 %s 个 schema", len(have_schemas))
+
+        return json.dumps(schema_data, ensure_ascii=False, indent=2)
+
     except Exception as e:
-        logger.error(f"获取数据库结构失败: {e}")
+        logger.error("获取数据库结构失败: %s", e)
         raise ToolError(
             "数据库信息查询失败",
             code="db_schema_fetch_failed",
@@ -199,22 +203,22 @@ async def get_database_schema(
 
 async def generate_sql(
     database_info: str,
-    task_desc: str,
+    task_description: str,
     llm: Optional[Any] = None,
-) -> Dict[str, Any]:
+) -> str:
     """
-    根据数据库结构和任务描述生成 SQL 语句
-    
+    根据数据库结构和任务描述生成 SQL 语句。
+
     Args:
-        database_info: 数据库结构信息（JSON 格式）
-        task_desc: 用户的查询需求描述
-        llm: LLM 实例，可选，默认使用 My_LLM
-        
+        database_info: 数据库结构信息（JSON 格式）。
+        task_description: 用户的查询需求描述。
+        llm: LLM 实例，可选，默认使用系统配置。
+
     Returns:
-        Dict 包含:
-            - success: bool 是否成功
-            - content: str 生成的 SQL 语句
-            - error: str 错误信息（失败时）
+        生成的 SQL 语句。
+
+    Raises:
+        ToolError: 当生成失败时抛出。
     """
     from langchain_core.prompts import PromptTemplate
     
@@ -230,7 +234,7 @@ async def generate_sql(
 {POSTGIS_GUIDANCE}
 
 数据库信息: {database_info}
-任务描述: {task_desc}
+任务描述: {task_description}
 
 要求：
 1. 请严格按照以下格式生成SQL语句，生成纯 SQL 语句，不要包裹任何引号或 markdown 标记。
@@ -243,16 +247,18 @@ async def generate_sql(
 任务为"查询观影数量排名前五的电影名称"
 SELECT movie_name FROM schema1.movie ORDER BY Number_views DESC LIMIT 5;
 """,
-        input_variables=["database_info", "task_desc", "POSTGIS_GUIDANCE"],
+        input_variables=["database_info", "task_description", "POSTGIS_GUIDANCE"],
     )
     
     try:
         chain = prompt | llm
-        response = await chain.ainvoke({
-            "database_info": database_info,
-            "task_desc": task_desc,
-            "POSTGIS_GUIDANCE": POSTGIS_GUIDANCE,
-        })
+        response = await chain.ainvoke(
+            {
+                "database_info": database_info,
+                "task_description": task_description,
+                "POSTGIS_GUIDANCE": POSTGIS_GUIDANCE,
+            }
+        )
         
         sql = response.content.strip() if hasattr(response, "content") else str(response).strip()
         
@@ -265,16 +271,12 @@ SELECT movie_name FROM schema1.movie ORDER BY Number_views DESC LIMIT 5;
             sql = sql[:-3]
         sql = sql.strip()
         
-        logger.info(f"SQL 生成成功: {sql[:100]}...")
-        
-        return {
-            "success": True,
-            "content": sql,
-            "error": None,
-        }
-        
+        logger.info("SQL 生成成功: %s...", sql[:100])
+
+        return sql
+
     except Exception as e:
-        logger.error(f"SQL 生成失败: {e}")
+        logger.error("SQL 生成失败: %s", e)
         raise ToolError(
             "SQL 生成失败",
             code="sql_generation_failed",
@@ -284,22 +286,25 @@ SELECT movie_name FROM schema1.movie ORDER BY Number_views DESC LIMIT 5;
 
 async def validate_sql(sql: str) -> Dict[str, Any]:
     """
-    验证 SQL 语句语法是否正确（使用 EXPLAIN）
-    
+    验证 SQL 语句语法是否正确（使用 EXPLAIN）。
+
     Args:
-        sql: 待验证的 SQL 语句
-        
+        sql: 待验证的 SQL 语句。
+
     Returns:
-        Dict 包含:
-            - valid: bool 是否有效
-            - message: str 验证结果消息
-            - errors: List[str] 错误列表
+        包含验证状态与错误信息的字典。
+
+    Raises:
+        ToolError: 当数据库连接失败时抛出。
+
+    Notes:
+        SQL 语法错误会以 valid=False 的结果返回，不视为工具执行失败。
     """
     settings = get_settings()
-    
+
     try:
         from psycopg import AsyncConnection
-        
+
         conn = await AsyncConnection.connect(
             host=settings.db_host,
             port=settings.db_port,
@@ -307,27 +312,38 @@ async def validate_sql(sql: str) -> Dict[str, Any]:
             user=settings.db_user,
             password=settings.db_password.get_secret_value(),
         )
-        
+    except Exception as e:
+        logger.error("SQL 语法验证连接失败: %s", e)
+        raise ToolError(
+            "数据库连接失败",
+            code="db_connection_failed",
+            details={
+                "database": settings.db_name,
+                "host": settings.db_host,
+                "port": settings.db_port,
+            },
+            cause=e,
+        ) from e
+
+    try:
         async with conn.cursor() as cursor:
             await cursor.execute(f"EXPLAIN {sql}")
-        
-        await conn.close()
-        
+
         logger.info("SQL 语法验证通过")
-        
         return {
             "valid": True,
             "message": "SQL 语法验证通过",
             "errors": [],
         }
-        
     except Exception as e:
-        logger.warning(f"SQL 语法错误: {e}")
+        logger.warning("SQL 语法错误: %s", e)
         return {
             "valid": False,
             "message": f"SQL 语法错误: {str(e)}",
             "errors": [str(e)],
         }
+    finally:
+        await conn.close()
 
 
 async def correct_sql(
@@ -335,21 +351,21 @@ async def correct_sql(
     error_message: str,
     database_info: str,
     llm: Optional[Any] = None,
-) -> Dict[str, Any]:
+) -> str:
     """
-    修正错误的 SQL 语句
-    
+    修正错误的 SQL 语句。
+
     Args:
-        sql: 原始 SQL 语句
-        error_message: 错误信息
-        database_info: 数据库结构信息
-        llm: LLM 实例，可选
-        
+        sql: 原始 SQL 语句。
+        error_message: 错误信息。
+        database_info: 数据库结构信息。
+        llm: LLM 实例，可选。
+
     Returns:
-        Dict 包含:
-            - success: bool 是否成功
-            - content: str 修正后的 SQL 语句
-            - error: str 错误信息（失败时）
+        修正后的 SQL 语句。
+
+    Raises:
+        ToolError: 当修正失败时抛出。
     """
     from langchain_core.prompts import PromptTemplate
     
@@ -399,16 +415,12 @@ async def correct_sql(
             corrected = corrected[:-3]
         corrected = corrected.strip()
         
-        logger.info(f"SQL 修正成功: {corrected[:100]}...")
-        
-        return {
-            "success": True,
-            "content": corrected,
-            "error": None,
-        }
-        
+        logger.info("SQL 修正成功: %s...", corrected[:100])
+
+        return corrected
+
     except Exception as e:
-        logger.error(f"SQL 修正失败: {e}")
+        logger.error("SQL 修正失败: %s", e)
         raise ToolError(
             "SQL 修正失败",
             code="sql_correction_failed",
@@ -416,23 +428,17 @@ async def correct_sql(
         ) from e
 
 
-async def execute_sql(query: str, user_id: str = "default") -> Dict[str, Any]:
+async def execute_sql(query: str) -> Dict[str, Any]:
     """
-    执行 SQL 查询（需要权限）
-    
+    执行 SQL 查询（需要权限）。
+
     Args:
-        query: SQL 查询语句
-        user_id: 用户 ID，用于权限检查
-        
+        query: SQL 查询语句。
     Returns:
-        Dict 包含:
-            - success: bool 是否成功
-            - content: str JSON 格式的查询结果
-            - error: str 错误信息（失败时）
-            - row_count: int 返回行数
-            
+        查询结果字典，包含 rows 与 row_count。
+
     Raises:
-        PermissionError: 用户没有 execute_sql 工具权限
+        ToolError: 当执行失败时抛出。
     """
     settings = get_settings()
     
@@ -455,17 +461,15 @@ async def execute_sql(query: str, user_id: str = "default") -> Dict[str, Any]:
         await conn.close()
         
         row_count = len(results) if results else 0
-        logger.info(f"SQL 执行成功，返回 {row_count} 条记录")
-        
+        logger.info("SQL 执行成功，返回 %s 条记录", row_count)
+
         return {
-            "success": True,
-            "content": json.dumps(results, default=str, ensure_ascii=False),
-            "error": None,
+            "rows": results,
             "row_count": row_count,
         }
-        
+
     except Exception as e:
-        logger.error(f"SQL 执行失败: {e}")
+        logger.error("SQL 执行失败: %s", e)
         raise ToolError(
             "SQL 执行失败",
             code="sql_execute_failed",
@@ -480,21 +484,19 @@ async def execute_sql_with_retry(
     llm: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """
-    执行 SQL 查询，失败时自动修正并重试
-    
+    执行 SQL 查询，失败时自动修正并重试。
+
     Args:
-        query: SQL 查询语句
-        database_info: 数据库结构信息（用于修正）
-        max_retries: 最大重试次数
-        llm: LLM 实例
-        
+        query: SQL 查询语句。
+        database_info: 数据库结构信息（用于修正）。
+        max_retries: 最大重试次数。
+        llm: LLM 实例。
+
     Returns:
-        Dict 包含:
-            - success: bool 是否成功
-            - content: str 查询结果
-            - error: str 错误信息（失败时）
-            - attempts: int 尝试次数
-            - final_sql: str 最终执行的 SQL
+        查询结果字典，包含 rows、row_count、attempts 与 final_sql。
+
+    Raises:
+        ToolError: 当重试失败时抛出。
     """
     current_sql = query
     last_error = None
@@ -504,33 +506,30 @@ async def execute_sql_with_retry(
             result = await execute_sql(current_sql)
         except ToolError as exc:
             last_error = exc.to_dict()
-            logger.warning(f"SQL 执行失败（第 {attempt} 次）: {last_error}")
+            logger.warning("SQL 执行失败（第 %s 次）: %s", attempt, last_error)
             result = None
-        
-        if result and result.get("success"):
+
+        if result:
             return {
                 **result,
                 "attempts": attempt,
                 "final_sql": current_sql,
             }
         
-        if result:
-            last_error = result.get("error")
-            logger.warning(f"SQL 执行失败（第 {attempt} 次）: {last_error}")
-        
         if attempt < max_retries:
             # 尝试修正 SQL
             try:
-                correction = await correct_sql(current_sql, str(last_error), database_info, llm)
+                correction = await correct_sql(
+                    current_sql,
+                    str(last_error),
+                    database_info,
+                    llm,
+                )
             except ToolError as exc:
                 last_error = exc.to_dict()
                 break
-            if correction.get("success"):
-                current_sql = correction["content"]
-                logger.info("SQL 已修正，准备重试")
-            else:
-                last_error = correction.get("error")
-                break
+            current_sql = correction
+            logger.info("SQL 已修正，准备重试")
     
     raise ToolError(
         f"SQL 执行失败（已重试 {max_retries} 次）",
@@ -541,3 +540,148 @@ async def execute_sql_with_retry(
             "last_error": last_error,
         },
     )
+
+
+CHECK_DATABASE_CONNECTION_SPEC = ToolSpec(
+    name="check_database_connection",
+    description="检查 PostgreSQL 数据库连接状态。",
+    parameters={
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": False,
+    },
+    handler=check_database_connection,
+)
+
+GET_DATABASE_SCHEMA_SPEC = ToolSpec(
+    name="get_database_schema",
+    description="获取数据库结构信息（表名、列名、注释）。",
+    parameters={
+        "type": "object",
+        "properties": {
+            "schemas": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "需要查询的 schema 列表，可选。",
+            },
+        },
+        "required": [],
+        "additionalProperties": False,
+    },
+    handler=get_database_schema,
+)
+
+GENERATE_SQL_SPEC = ToolSpec(
+    name="generate_sql",
+    description="根据数据库结构信息和任务描述生成 SQL 语句。",
+    parameters={
+        "type": "object",
+        "properties": {
+            "database_info": {
+                "type": "string",
+                "description": "数据库结构信息（JSON 字符串）。",
+            },
+            "task_description": {
+                "type": "string",
+                "description": "用户查询需求描述。",
+            },
+            "llm": {
+                "type": "object",
+                "description": "可选的 LLM 实例。",
+            },
+        },
+        "required": ["database_info", "task_description"],
+        "additionalProperties": False,
+    },
+    handler=generate_sql,
+)
+
+VALIDATE_SQL_SPEC = ToolSpec(
+    name="validate_sql",
+    description="验证 SQL 语句语法是否正确（使用 EXPLAIN）。",
+    parameters={
+        "type": "object",
+        "properties": {
+            "sql": {
+                "type": "string",
+                "description": "待验证的 SQL 语句。",
+            }
+        },
+        "required": ["sql"],
+        "additionalProperties": False,
+    },
+    handler=validate_sql,
+)
+
+CORRECT_SQL_SPEC = ToolSpec(
+    name="correct_sql",
+    description="根据错误信息和数据库结构修正 SQL 语句。",
+    parameters={
+        "type": "object",
+        "properties": {
+            "sql": {"type": "string", "description": "原始 SQL 语句。"},
+            "error_message": {"type": "string", "description": "错误信息。"},
+            "database_info": {
+                "type": "string",
+                "description": "数据库结构信息（JSON 字符串）。",
+            },
+            "llm": {"type": "object", "description": "可选的 LLM 实例。"},
+        },
+        "required": ["sql", "error_message", "database_info"],
+        "additionalProperties": False,
+    },
+    handler=correct_sql,
+)
+
+EXECUTE_SQL_SPEC = ToolSpec(
+    name="execute_sql",
+    description="执行 SQL 查询并返回结果。",
+    parameters={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "SQL 查询语句。"},
+        },
+        "required": ["query"],
+        "additionalProperties": False,
+    },
+    handler=execute_sql,
+)
+
+EXECUTE_SQL_WITH_RETRY_SPEC = ToolSpec(
+    name="execute_sql_with_retry",
+    description="执行 SQL 查询，失败时自动修正并重试。",
+    parameters={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "SQL 查询语句。"},
+            "database_info": {
+                "type": "string",
+                "description": "数据库结构信息（JSON 字符串）。",
+            },
+            "max_retries": {"type": "integer", "description": "最大重试次数。"},
+            "llm": {"type": "object", "description": "可选的 LLM 实例。"},
+        },
+        "required": ["query", "database_info"],
+        "additionalProperties": False,
+    },
+    handler=execute_sql_with_retry,
+)
+
+
+__all__ = [
+    "check_database_connection",
+    "get_database_schema",
+    "generate_sql",
+    "validate_sql",
+    "correct_sql",
+    "execute_sql",
+    "execute_sql_with_retry",
+    "CHECK_DATABASE_CONNECTION_SPEC",
+    "GET_DATABASE_SCHEMA_SPEC",
+    "GENERATE_SQL_SPEC",
+    "VALIDATE_SQL_SPEC",
+    "CORRECT_SQL_SPEC",
+    "EXECUTE_SQL_SPEC",
+    "EXECUTE_SQL_WITH_RETRY_SPEC",
+]

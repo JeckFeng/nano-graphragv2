@@ -19,18 +19,15 @@ Deep Agent 高德地图路线规划工具示例
 """
 
 import asyncio
-import os
 import uuid
-from typing import Literal
 
 from deepagents import create_deep_agent
 from dotenv import load_dotenv
 from core.tool_context import context_tool, wrap_runnable_with_tool_context
-from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
 from core import LLMFactory, load_llm_config
-from Tools.gaode_map_tool import GaodeDrivingTool
+from Tools.gaode_map_tool import gaode_driving_route as _gaode_driving_route
 
 # 加载环境变量
 load_dotenv()
@@ -48,8 +45,7 @@ async def gaode_driving_route(origin: str, destination: str) -> dict:
     Returns:
         dict: 路线规划结果
     """
-    driving_tool = GaodeDrivingTool()
-    return await driving_tool(origin=origin, destination=destination)
+    return await _gaode_driving_route(origin=origin, destination=destination)
 
 
 def create_map_agent() -> tuple:

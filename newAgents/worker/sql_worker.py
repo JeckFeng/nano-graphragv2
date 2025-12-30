@@ -18,14 +18,13 @@ SQL Worker - PostgreSQL 数据库查询示例
 """
 
 import asyncio
-import os
+import json
 import uuid
-from typing import Literal
+
 from core import LLMFactory, load_llm_config
 from deepagents import create_deep_agent
 from dotenv import load_dotenv
 from core.tool_context import context_tool, wrap_runnable_with_tool_context
-from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 
 # 加载环境变量
@@ -94,15 +93,6 @@ def _get_sql_tools():
     return _SQL_TOOLS
 
 
-def _get_user_id() -> str:
-    try:
-        from core.logging_context import user_id_var
-    except Exception:
-        return "default"
-    user_id = user_id_var.get()
-    return user_id or "default"
-
-
 @context_tool
 async def check_connection() -> str:
     """检查数据库连接是否正常
@@ -125,11 +115,8 @@ async def get_schema() -> str:
         JSON 格式的数据库结构信息
     """
     tools = _get_sql_tools()
-    user_id = _get_user_id()
-    result = await tools["get_database_schema"](user_id=user_id)
-    if result.get("success"):
-        return result["content"]
-    return f"获取数据库结构失败: {result.get('error', '未知错误')}"
+    schema_json = await tools["get_database_schema"]()
+    return schema_json
 
 
 @context_tool
@@ -144,10 +131,8 @@ async def generate_sql(database_info: str, task_description: str) -> str:
         生成的 SQL 语句
     """
     tools = _get_sql_tools()
-    result = await tools["generate_sql"](database_info, task_description)
-    if result.get("success"):
-        return result["content"]
-    return f"SQL 生成失败: {result.get('error', '未知错误')}"
+    sql = await tools["generate_sql"](database_info, task_description)
+    return sql
 
 
 @context_tool
@@ -180,10 +165,8 @@ async def correct_sql(sql: str, error_message: str, database_info: str) -> str:
         修正后的 SQL 语句
     """
     tools = _get_sql_tools()
-    result = await tools["correct_sql"](sql, error_message, database_info)
-    if result.get("success"):
-        return f"修正后的 SQL:\n{result['content']}"
-    return f"SQL 修正失败: {result.get('error', '未知错误')}"
+    corrected = await tools["correct_sql"](sql, error_message, database_info)
+    return f"修正后的 SQL:\n{corrected}"
 
 
 @context_tool
@@ -197,16 +180,14 @@ async def execute_sql(query: str) -> str:
         查询结果
     """
     tools = _get_sql_tools()
-    user_id = _get_user_id()
-    result = await tools["execute_sql"](query, user_id=user_id)
-    if result.get("success"):
-        row_count = result.get("row_count", 0)
-        content = result["content"]
+    result = await tools["execute_sql"](query)
+    row_count = result.get("row_count", 0)
+    rows = result.get("rows", [])
+    content = json.dumps(rows, ensure_ascii=False, default=str)
 
-        if row_count > 50:
-            return f"查询成功，返回 {row_count} 条记录（结果较多，显示部分）:\n{content[:2000]}..."
-        return f"查询成功，返回 {row_count} 条记录:\n{content}"
-    return f"查询执行失败: {result.get('error', '未知错误')}"
+    if row_count > 50:
+        return f"查询成功，返回 {row_count} 条记录（结果较多，显示部分）:\n{content[:2000]}..."
+    return f"查询成功，返回 {row_count} 条记录:\n{content}"
 
 
 def create_sql_worker() -> tuple:
