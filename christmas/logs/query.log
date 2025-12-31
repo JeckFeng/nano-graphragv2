@@ -67,3 +67,9 @@
 2025-12-30 17:00:04.0730 - WARNING - graphrag.query.structured_search.local_search.mixed_context - Reached token limit - reverting to previous context state
 2025-12-30 17:00:06.0246 - WARNING - graphrag.query.context_builder.community_context - Warning: No community records added when building community context.
 2025-12-30 17:00:06.0262 - WARNING - graphrag.query.structured_search.local_search.mixed_context - Reached token limit - reverting to previous context state
+2025-12-31 13:46:07.0316 - WARNING - graphrag.query.context_builder.community_context - Warning: No community records added when building community context.
+2025-12-31 13:46:07.0320 - WARNING - graphrag.query.structured_search.local_search.mixed_context - Reached token limit - reverting to previous context state
+2025-12-31 13:46:08.0072 - WARNING - graphrag.query.context_builder.community_context - Warning: No community records added when building community context.
+2025-12-31 13:46:08.0075 - WARNING - graphrag.query.structured_search.local_search.mixed_context - Reached token limit - reverting to previous context state
+2025-12-31 13:47:09.0418 - WARNING - graphrag.query.context_builder.community_context - Warning: No community records added when building community context.
+2025-12-31 13:47:09.0420 - WARNING - graphrag.query.structured_search.local_search.mixed_context - Reached token limit - reverting to previous context state
