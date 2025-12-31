@@ -8,54 +8,85 @@
 # 底层 Agent（直接使用工具的 Agent）
 # ---------------------------------------------------------------------------
 agents:
-  - name: addition-agent
+  - name: rag_worker
     type: agent
-    description: "加法代理，负责两数相加运算"
+    description: "知识库检索 Worker，执行 GraphRAG 与多模态检索任务"
     tools:
-      - add_numbers
-  
-  - name: subtraction-agent
+      - identify_intent
+      - rewrite_query_and_extract_keywords
+      - parallel_identify_intent
+      - parallel_execute_queries
+      - search_local
+      - search_global
+      - search_images
+      - search_tables
+      - evaluate_quality
+      - json_to_markdown
+
+  - name: sql_worker
     type: agent
-    description: "减法代理，负责两数相减运算"
+    description: "SQL 查询 Worker，执行数据库结构获取与查询任务"
     tools:
-      - subtract_numbers
-  
-  - name: multiplication-agent
+      - sql_check_connection
+      - sql_get_schema
+      - generate_sql
+      - validate_sql
+      - correct_sql
+      - execute_sql
+
+  - name: neo4j_worker
     type: agent
-    description: "乘法代理，负责两数相乘运算"
+    description: "Neo4j 查询 Worker，执行 Cypher 生成与查询任务"
     tools:
-      - multiply_numbers
-  
-  - name: division-agent
+      - neo4j_check_connection
+      - neo4j_get_schema
+      - generate_cypher
+      - validate_cypher
+      - correct_cypher
+      - execute_cypher
+
+  - name: map_worker
     type: agent
-    description: "除法代理，负责两数相除运算"
+    description: "地图服务 Worker，执行路线规划任务"
     tools:
-      - divide_numbers
+      - gaode_driving_route
 
 # ---------------------------------------------------------------------------
 # Team Agent（管理子 Agent，不直接使用工具）
 # ---------------------------------------------------------------------------
 teams:
-  - name: team1-agent
+  - name: rag_team
     type: team
-    description: "乘法和除法团队"
+    description: "知识库检索团队"
     agents:
-      - multiplication-agent
-      - division-agent
-  
-  - name: team2-agent
+      - rag_worker
+
+  - name: sql_team
     type: team
-    description: "加法和减法团队"
+    description: "SQL 数据库查询团队"
     agents:
-      - addition-agent
-      - subtraction-agent
+      - sql_worker
+
+  - name: neo4j_team
+    type: team
+    description: "Neo4j 图数据库查询团队"
+    agents:
+      - neo4j_worker
+
+  - name: map_team
+    type: team
+    description: "地图服务团队"
+    agents:
+      - map_worker
 
 # ---------------------------------------------------------------------------
 # Top Supervisor（总经理，不直接使用工具）
 # ---------------------------------------------------------------------------
-top_supervisor:
+top_supervisor_newagents:
   name: top-supervisor
-  description: "总经理代理，协调所有团队"
+  description: "顶层 Supervisor（协调 RAG/SQL/Neo4j/地图团队）"
   teams:
-    - team1-agent
-    - team2-agent
+    - rag_team
+    - sql_team
+    - neo4j_team
+    - map_team

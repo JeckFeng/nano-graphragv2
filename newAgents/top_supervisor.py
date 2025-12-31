@@ -153,7 +153,7 @@ def create_top_supervisor(checkpointer) -> tuple:
     # 创建地图子代理（复用已有实现）
     map_team_agent, _ = create_map_team_agent()
     map_team_subagent = CompiledSubAgent(
-        name="amap_team",
+        name="map_team",
         description="地图服务团队，负责路线规划与地点查询",
         runnable=map_team_agent,
     )
