@@ -1,8 +1,8 @@
 """
-RAG Team Agent - 知识库检索团队代理
+Neo4j Team Agent - 图数据库查询团队代理
 
-本模块实现一个团队代理，它不直接使用工具，而是通过调用子代理完成知识库检索任务。
-RAG Team Agent 管理一个子代理：rag_worker。
+本模块实现一个团队代理，它不直接使用工具，而是通过调用子代理完成图数据库查询任务。
+Neo4j Team Agent 管理一个子代理：neo4j_worker。
 
 技术栈:
     - LangGraph 1.0
@@ -14,8 +14,8 @@ RAG Team Agent 管理一个子代理：rag_worker。
     - 必须配置 DASHSCOPE_API_KEY 环境变量
     - 使用 MemorySaver 作为 checkpointer 以支持状态持久化
     - 子代理的工具调用需要人工审核批准
-    - RAG Team Agent 本身不使用工具，只负责任务分发
-    - 复用已有的 rag_worker 实现
+    - Neo4j Team Agent 本身不使用工具，只负责任务分发
+    - 复用已有的 neo4j_worker 实现
 """
 
 import asyncio
@@ -31,61 +31,60 @@ from langgraph.types import Command
 from core.tool_context import wrap_runnable_with_tool_context
 
 # 导入已有的代理实现
-from newAgents.worker.rag_worker import create_rag_worker as create_rag_worker_agent
+from agents.worker.neo4j_worker import create_neo4j_worker as create_neo4j_worker_agent
 
 # 加载环境变量
 load_dotenv()
 
 # Team Supervisor 系统提示词
-RAG_TEAM_PROMPT = """你是 RAG 团队的 Supervisor，负责协调知识库检索与答案生成任务。
+NEO4J_TEAM_PROMPT = """你是 Neo4j 图数据库查询团队的 Supervisor，负责协调图查询任务。
 
 ## 任务目标与成功定义
-- 目标：将用户问题交由 rag_worker 完成检索，并基于其结果输出可靠、可复核的答案。
-- 成功标准：答案清晰、信息来源明确；若信息不足，明确说明原因与下一步建议。
+- 目标：将用户的图查询需求委托给 neo4j_worker，并输出可核验的结果与解释。
+- 成功：包含 Cypher、结构化结果与自然语言解释；不足时说明原因与建议。
 
 ## 背景与上下文
-- 你是团队管理者，不直接检索或生成证据。
-- rag_worker 才是实际执行检索与答案生成的子代理。
+- 你是上层协调者，不直接调用数据库工具。
+- neo4j_worker 是唯一执行查询的子代理。
 
 ## 角色定义
-- **你（RAG Team Supervisor）**：分析需求、委托任务、整合结果并对外回复。
-- **rag_worker**：知识库检索 Worker，负责具体检索与答案生成。
+- **你（Neo4j Team Supervisor）**：解析需求、委托任务、整合结果并对外回复。
+- **neo4j_worker**：生成并执行 Cypher 查询，返回结果。
 
 ## 行为边界（Behavior Boundaries）
-- 不直接调用任何工具或编造答案，仅委托 rag_worker。
-- 不修改或推断 rag_worker 的结论；必要时可要求用户补充信息后再委托。
-- 当 rag_worker 返回错误或结果不足时，直说不足与原因。
+- 不自行编写或执行 Cypher，不编造结果。
+- 仅基于 neo4j_worker 的结果进行整理与解释。
+- 若结果不足以回答问题，明确指出缺失信息并建议补充。
 
 ## 可使用工具（Tools）
-- **rag_worker**（子代理）：用于检索与答案生成的唯一执行方。
+- **neo4j_worker**（子代理）：执行图查询的唯一执行方。
 
 ## 流程逻辑
-1. 解析用户问题，提取关键信息需求与约束。
-2. 委托 rag_worker 执行检索与答案生成。
-3. 汇总 rag_worker 结果并结构化输出；若不足则给出原因与建议。
+1. 理解需求，抽取关键实体、关系与约束。
+2. 委托 neo4j_worker 执行查询。
+3. 基于返回的 Cypher 与结果进行结构化输出与解释。
 
 ## 验收标准（Acceptance Criteria）
-- 明确标注信息来源或检索范围说明。
-- 如有相关图片/表格，随答案提供；若无，明确说明未找到。
-- 结论与 rag_worker 结果一致，不额外编造。
-- 输出格式一致、清晰可读。
+- 展示使用的 Cypher 语句。
+- 以结构化方式展示查询结果（无结果需说明）。
+- 提供清晰的自然语言解释。
 
 ## 输出格式规定
-按以下格式输出（无内容时填“无”）：
-1. **最终答案**：<答案>
-2. **来源与证据**：<来源说明/检索范围>
-3. **相关图片**：<图片列表或“无”>
-4. **相关表格**：<表格或“无”>
-5. **不足与建议**：<原因与下一步建议或“无”>
+按以下格式输出（无内容请填写“无”）：
+1. **最终答案**：<简要结论>
+2. **Cypher 语句**：<Cypher>
+3. **查询结果**：<结构化结果或“无”>
+4. **结果解释**：<自然语言解释>
+5. **不足与建议**：<原因与建议或“无”>
 """
 
 
-def create_rag_team_agent() -> Tuple[Any, MemorySaver]:
+def create_neo4j_team_agent() -> Tuple[Any, MemorySaver]:
     """
-    创建 RAG Team Agent（团队代理）。
+    创建 Neo4j Team Agent（团队代理）。
 
     该函数创建一个团队代理，它管理一个子代理：
-    - rag_worker: 负责知识库检索与答案生成（复用 rag_worker 实现）
+    - neo4j_worker: 负责图数据库查询（复用 neo4j_worker 实现）
 
     团队代理本身不使用工具，而是将任务委派给合适的子代理执行。
 
@@ -110,21 +109,21 @@ def create_rag_team_agent() -> Tuple[Any, MemorySaver]:
     # 创建内存检查点保存器（Human-in-the-loop 必需）
     checkpointer = MemorySaver()
 
-    # 创建 RAG 子代理（复用已有实现）
-    rag_worker_agent, _ = create_rag_worker_agent()
-    rag_worker_subagent = CompiledSubAgent(
-        name="rag_worker",
-        description="知识库检索 Worker，负责执行具体的检索与答案生成任务",
-        runnable=rag_worker_agent,
+    # 创建 Neo4j 子代理（复用已有实现）
+    neo4j_worker_agent, _ = create_neo4j_worker_agent()
+    neo4j_worker_subagent = CompiledSubAgent(
+        name="neo4j_worker",
+        description="图查询专家，负责生成和执行 Cypher 查询",
+        runnable=neo4j_worker_agent,
     )
 
     # 定义子代理列表
-    subagents = [rag_worker_subagent]
+    subagents = [neo4j_worker_subagent]
 
-    # 创建 RAG Team Agent（团队代理）
+    # 创建 Neo4j Team Agent（团队代理）
     agent = create_deep_agent(
         model=model,
-        system_prompt=RAG_TEAM_PROMPT,
+        system_prompt=NEO4J_TEAM_PROMPT,
         subagents=subagents,
         checkpointer=checkpointer,
     )
@@ -194,24 +193,24 @@ def handle_human_review(result: dict, config: dict, agent: Any) -> dict:
 
 def main() -> None:
     """
-    主函数：演示 RAG Team Agent 的多轮对话功能。
+    主函数：演示 Neo4j Team Agent 的多轮对话功能。
 
     执行流程:
-        1. 创建 RAG Team Agent（包含 rag_worker 子代理）
+        1. 创建 Neo4j Team Agent（包含 neo4j_worker 子代理）
         2. 进入多轮对话循环
         3. 每次请求如果触发中断，进行人工审核
         4. 显示结果并继续下一轮对话
     """
     try:
         # 创建团队代理
-        agent, checkpointer = create_rag_team_agent()
+        agent, checkpointer = create_neo4j_team_agent()
 
         # 创建配置，包含唯一的 thread_id 用于状态持久化
         thread_id = str(uuid.uuid4())
         config = {"configurable": {"thread_id": thread_id}}
 
         print("=" * 60)
-        print("RAG Team Agent")
+        print("Neo4j Team Agent")
         print("=" * 60)
         print(f"Thread ID: {thread_id}")
         print("\n功能说明：")

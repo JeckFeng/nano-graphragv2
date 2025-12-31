@@ -1,8 +1,8 @@
 """
-Map Team Agent - 高德地图服务团队代理
+RAG Team Agent - 知识库检索团队代理
 
-本模块实现一个团队代理，它不直接使用工具，而是通过调用子代理完成路径规划任务。
-Map Team Agent 管理一个子代理：map_worker。
+本模块实现一个团队代理，它不直接使用工具，而是通过调用子代理完成知识库检索任务。
+RAG Team Agent 管理一个子代理：rag_worker。
 
 技术栈:
     - LangGraph 1.0
@@ -14,14 +14,14 @@ Map Team Agent 管理一个子代理：map_worker。
     - 必须配置 DASHSCOPE_API_KEY 环境变量
     - 使用 MemorySaver 作为 checkpointer 以支持状态持久化
     - 子代理的工具调用需要人工审核批准
-    - Map Team Agent 本身不使用工具，只负责任务分发
-    - 复用已有的 map_worker 实现
+    - RAG Team Agent 本身不使用工具，只负责任务分发
+    - 复用已有的 rag_worker 实现
 """
 
 import asyncio
 import os
 import uuid
-from typing import Any
+from typing import Any, Tuple
 
 from deepagents import CompiledSubAgent, create_deep_agent
 from dotenv import load_dotenv
@@ -31,67 +31,66 @@ from langgraph.types import Command
 from core.tool_context import wrap_runnable_with_tool_context
 
 # 导入已有的代理实现
-from newAgents.worker.map_worker import create_map_agent as create_map_worker_agent
+from agents.worker.rag_worker import create_rag_worker as create_rag_worker_agent
 
 # 加载环境变量
 load_dotenv()
 
 # Team Supervisor 系统提示词
-MAP_TEAM_PROMPT = """你是高德地图服务团队的 Supervisor，负责协调路线规划任务。
+RAG_TEAM_PROMPT = """你是 RAG 团队的 Supervisor，负责协调知识库检索与答案生成任务。
 
 ## 任务目标与成功定义
-- 目标：将用户的路线规划请求委托给 map_worker，并输出清晰可核验的路线结论。
-- 成功：给出总距离与预计时长；若失败说明原因并给出可执行的改进建议。
+- 目标：将用户问题交由 rag_worker 完成检索，并基于其结果输出可靠、可复核的答案。
+- 成功标准：答案清晰、信息来源明确；若信息不足，明确说明原因与下一步建议。
 
 ## 背景与上下文
-- 你是团队管理者，不直接调用任何地图工具。
-- 仅支持坐标形式的起点/终点（格式为“经度,纬度”）。
+- 你是团队管理者，不直接检索或生成证据。
+- rag_worker 才是实际执行检索与答案生成的子代理。
 
 ## 角色定义
-- **你（Map Team Supervisor）**：解析需求、判断信息是否完备、委托任务、汇总结果并回复用户。
-- **map_worker**：路线规划子代理，负责实际调用工具并生成结果。
+- **你（RAG Team Supervisor）**：分析需求、委托任务、整合结果并对外回复。
+- **rag_worker**：知识库检索 Worker，负责具体检索与答案生成。
 
 ## 行为边界（Behavior Boundaries）
-- 不自行计算路线或编造结果，必须委托 map_worker。
-- 仅可基于 map_worker 返回的数值进行单位换算与格式化，不得推测未提供的数值。
-- 若用户未提供坐标或格式不合法，先向用户索取或纠正格式后再委托。
-- 不进行地理编码/逆地理编码（当前不支持地名输入）。
+- 不直接调用任何工具或编造答案，仅委托 rag_worker。
+- 不修改或推断 rag_worker 的结论；必要时可要求用户补充信息后再委托。
+- 当 rag_worker 返回错误或结果不足时，直说不足与原因。
 
 ## 可使用工具（Tools）
-- **map_worker**（子代理）：执行路线规划的唯一执行方。
+- **rag_worker**（子代理）：用于检索与答案生成的唯一执行方。
 
 ## 流程逻辑
-1. 理解用户需求，提取起点/终点坐标。
-2. 若坐标缺失或格式不合规，要求用户补充或更正。
-3. 委托 map_worker 生成路线结果。
-4. 对 map_worker 输出进行校验与二次格式化（统一单位、补充易读时长）。
-5. 基于格式化结果进行结构化回复。
+1. 解析用户问题，提取关键信息需求与约束。
+2. 委托 rag_worker 执行检索与答案生成。
+3. 汇总 rag_worker 结果并结构化输出；若不足则给出原因与建议。
 
 ## 验收标准（Acceptance Criteria）
-- 明确给出总距离与预计时长。
-- 若失败，指出原因（如坐标格式错误/无结果）并给出建议。
-- 输出结构清晰、可读、无臆造信息。
+- 明确标注信息来源或检索范围说明。
+- 如有相关图片/表格，随答案提供；若无，明确说明未找到。
+- 结论与 rag_worker 结果一致，不额外编造。
+- 输出格式一致、清晰可读。
 
 ## 输出格式规定
-按以下格式输出（无内容请填写“无”）：
-1. **路线结论**：<简要结论>
-2. **距离与时长**：<原始: distance_meters=..., duration_seconds=... | 易读: ...公里/小时/分钟>
-3. **来源与说明**：<高德地图/参数说明>
-4. **异常或建议**：<原因与建议或“无”>
+按以下格式输出（无内容时填“无”）：
+1. **最终答案**：<答案>
+2. **来源与证据**：<来源说明/检索范围>
+3. **相关图片**：<图片列表或“无”>
+4. **相关表格**：<表格或“无”>
+5. **不足与建议**：<原因与下一步建议或“无”>
 """
 
 
-def create_map_team_agent() -> tuple:
+def create_rag_team_agent() -> Tuple[Any, MemorySaver]:
     """
-    创建 Map Team Agent（团队代理）。
+    创建 RAG Team Agent（团队代理）。
 
     该函数创建一个团队代理，它管理一个子代理：
-    - map_worker: 负责路线规划（复用 map_worker 实现）
+    - rag_worker: 负责知识库检索与答案生成（复用 rag_worker 实现）
 
     团队代理本身不使用工具，而是将任务委派给合适的子代理执行。
 
     Returns:
-        tuple: (agent, checkpointer) - 代理实例和检查点保存器
+        Tuple[Any, MemorySaver]: (agent, checkpointer) - 代理实例和检查点保存器
 
     Raises:
         ValueError: 当 DASHSCOPE_API_KEY 未设置时抛出
@@ -111,21 +110,21 @@ def create_map_team_agent() -> tuple:
     # 创建内存检查点保存器（Human-in-the-loop 必需）
     checkpointer = MemorySaver()
 
-    # 创建地图子代理（复用已有实现）
-    map_worker_agent, _ = create_map_worker_agent()
-    map_worker_subagent = CompiledSubAgent(
-        name="map_worker",
-        description="路线规划专家，负责规划各种出行路线",
-        runnable=map_worker_agent,
+    # 创建 RAG 子代理（复用已有实现）
+    rag_worker_agent, _ = create_rag_worker_agent()
+    rag_worker_subagent = CompiledSubAgent(
+        name="rag_worker",
+        description="知识库检索 Worker，负责执行具体的检索与答案生成任务",
+        runnable=rag_worker_agent,
     )
 
     # 定义子代理列表
-    subagents = [map_worker_subagent]
+    subagents = [rag_worker_subagent]
 
-    # 创建 Map Team Agent（团队代理）
+    # 创建 RAG Team Agent（团队代理）
     agent = create_deep_agent(
         model=model,
-        system_prompt=MAP_TEAM_PROMPT,
+        system_prompt=RAG_TEAM_PROMPT,
         subagents=subagents,
         checkpointer=checkpointer,
     )
@@ -195,24 +194,24 @@ def handle_human_review(result: dict, config: dict, agent: Any) -> dict:
 
 def main() -> None:
     """
-    主函数：演示 Map Team Agent 的多轮对话功能。
+    主函数：演示 RAG Team Agent 的多轮对话功能。
 
     执行流程:
-        1. 创建 Map Team Agent（包含 map_worker 子代理）
+        1. 创建 RAG Team Agent（包含 rag_worker 子代理）
         2. 进入多轮对话循环
         3. 每次请求如果触发中断，进行人工审核
         4. 显示结果并继续下一轮对话
     """
     try:
         # 创建团队代理
-        agent, checkpointer = create_map_team_agent()
+        agent, checkpointer = create_rag_team_agent()
 
         # 创建配置，包含唯一的 thread_id 用于状态持久化
         thread_id = str(uuid.uuid4())
         config = {"configurable": {"thread_id": thread_id}}
 
         print("=" * 60)
-        print("Map Team Agent")
+        print("RAG Team Agent")
         print("=" * 60)
         print(f"Thread ID: {thread_id}")
         print("\n功能说明：")

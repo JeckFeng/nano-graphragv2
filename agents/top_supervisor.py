@@ -34,10 +34,10 @@ from core import LLMFactory, load_llm_config
 from core.tool_context import wrap_runnable_with_tool_context
 
 # 导入已有的团队代理实现
-from newAgents.team.map_team import create_map_team_agent
-from newAgents.team.neo4j_team import create_neo4j_team_agent
-from newAgents.team.rag_team import create_rag_team_agent
-from newAgents.team.sql_team import create_sql_team_agent
+from agents.team.map_team import create_map_team_agent
+from agents.team.neo4j_team import create_neo4j_team_agent
+from agents.team.rag_team import create_rag_team_agent
+from agents.team.sql_team import create_sql_team_agent
 
 # 加载环境变量
 load_dotenv()
