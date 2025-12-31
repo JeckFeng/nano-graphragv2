@@ -35,8 +35,8 @@ SQL_WORKER_PROMPT = """你是一个 PostgreSQL 数据库查询专家，负责将
 
 ## 可用工具
 
-1. **check_connection**: 检查数据库连接状态
-2. **get_schema**: 获取数据库结构信息（表名、列名、注释）
+1. **sql_check_connection**: 检查数据库连接状态
+2. **sql_get_schema**: 获取数据库结构信息（表名、列名、注释）
 3. **generate_sql**: 根据数据库信息和用户问题生成 SQL 语句
 4. **validate_sql**: 验证 SQL 语法是否正确
 5. **correct_sql**: 修正错误的 SQL 语句
@@ -44,8 +44,8 @@ SQL_WORKER_PROMPT = """你是一个 PostgreSQL 数据库查询专家，负责将
 
 ## 工作流程
 
-1. 首先调用 `check_connection` 确认数据库连接正常
-2. 调用 `get_schema` 获取数据库结构信息
+1. 首先调用 `sql_check_connection` 确认数据库连接正常
+2. 调用 `sql_get_schema` 获取数据库结构信息
 3. 调用 `generate_sql` 生成 SQL 查询语句
 4. 调用 `validate_sql` 验证 SQL 语法
 5. 如果验证失败，调用 `correct_sql` 修正，然后重新验证（最多 3 次）
@@ -58,6 +58,8 @@ SQL_WORKER_PROMPT = """你是一个 PostgreSQL 数据库查询专家，负责将
 - 查询结果默认限制 50 条记录
 - 如果涉及 PostGIS 空间查询，使用正确的空间函数
 - 对于 INSERT/UPDATE/DELETE 等修改操作，需要谨慎执行
+- sql_get_schema 仅返回表名与列名，如需更多表请使用 limit/offset（返回为空表示无更多）
+- 如果用户仅询问有哪些表或表结构，直接使用 sql_get_schema 并返回结果，不必生成 SQL
 
 ## 输出格式
 
@@ -66,6 +68,11 @@ SQL_WORKER_PROMPT = """你是一个 PostgreSQL 数据库查询专家，负责将
 2. 使用的 SQL 语句
 3. 查询结果（表格形式）
 4. 结果的自然语言解释
+
+## 终止规则
+
+- 当任何工具返回结果中包含 "call_exhausted": true 时，立即停止并回复：
+  调用次数已用尽，需要用户确认/缩小范围
 """
 
 _SQL_TOOLS = None
@@ -94,7 +101,7 @@ def _get_sql_tools():
 
 
 @context_tool
-async def check_connection() -> str:
+async def sql_check_connection() -> str:
     """检查数据库连接是否正常
 
     Returns:
@@ -108,7 +115,7 @@ async def check_connection() -> str:
 
 
 @context_tool
-async def get_schema() -> str:
+async def sql_get_schema() -> str:
     """获取数据库结构信息（表名、列名、注释等）
 
     Returns:
@@ -124,7 +131,7 @@ async def generate_sql(database_info: str, task_description: str) -> str:
     """根据数据库信息和任务描述生成 SQL 语句
 
     Args:
-        database_info: 数据库结构信息（从 get_schema 获取）
+        database_info: 数据库结构信息（从 sql_get_schema 获取）
         task_description: 用户的查询需求描述
 
     Returns:
@@ -215,8 +222,8 @@ def create_sql_worker() -> tuple:
     agent = create_deep_agent(
         model=model,
         tools=[
-            check_connection,
-            get_schema,
+            sql_check_connection,
+            sql_get_schema,
             generate_sql,
             validate_sql,
             correct_sql,

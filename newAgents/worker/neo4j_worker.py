@@ -46,8 +46,8 @@ NEO4J_WORKER_PROMPT = """你是一个 Neo4j 图数据库专家，负责将自然
 
 ## 可用工具
 
-1. **check_connection**: 检查 Neo4j 连接状态
-2. **get_schema**: 获取图数据库 Schema（节点类型、关系类型）
+1. **neo4j_check_connection**: 检查 Neo4j 连接状态
+2. **neo4j_get_schema**: 获取图数据库 Schema（节点类型、关系类型）
 3. **generate_cypher**: 根据问题和 Schema 生成 Cypher 查询
 4. **validate_cypher**: 验证 Cypher 语法
 5. **correct_cypher**: 修正错误的 Cypher 语句
@@ -55,8 +55,8 @@ NEO4J_WORKER_PROMPT = """你是一个 Neo4j 图数据库专家，负责将自然
 
 ## 工作流程
 
-1. 首先调用 `check_connection` 确认数据库连接
-2. 调用 `get_schema` 获取数据库结构
+1. 首先调用 `neo4j_check_connection` 确认数据库连接
+2. 调用 `neo4j_get_schema` 获取数据库结构
 3. 调用 `generate_cypher` 生成查询语句
 4. 调用 `validate_cypher` 验证语法
 5. 如果验证失败，调用 `correct_cypher` 修正（最多 2 次）
@@ -89,7 +89,7 @@ NEO4J_WORKER_PROMPT = """你是一个 Neo4j 图数据库专家，负责将自然
 
 
 @context_tool
-async def check_connection() -> str:
+async def neo4j_check_connection() -> str:
     """检查 Neo4j 连接状态
 
     Returns:
@@ -102,7 +102,7 @@ async def check_connection() -> str:
 
 
 @context_tool
-async def get_schema() -> str:
+async def neo4j_get_schema() -> str:
     """获取 Neo4j 数据库 Schema
 
     Returns:
@@ -117,7 +117,7 @@ async def generate_cypher(question: str, db_schema: str) -> str:
 
     Args:
         question: 用户问题
-        db_schema: 数据库 Schema（从 get_schema 获取）
+        db_schema: 数据库 Schema（从 neo4j_get_schema 获取）
 
     Returns:
         生成的 Cypher 语句
@@ -209,8 +209,8 @@ def create_neo4j_worker() -> tuple:
     agent = create_deep_agent(
         model=model,
         tools=[
-            check_connection,
-            get_schema,
+            neo4j_check_connection,
+            neo4j_get_schema,
             generate_cypher,
             validate_cypher,
             correct_cypher,

@@ -88,14 +88,19 @@ async def check_database_connection() -> Dict[str, Any]:
 
 async def get_database_schema(
     schemas: Optional[List[str]] = None,
+    limit: Optional[int] = 200,
+    offset: int = 0,
 ) -> str:
     """
     获取数据库结构信息。
 
     Args:
         schemas: 要查询的 schema 列表，默认查询 rag_document、public、agent_backend。
+        limit: 每次返回的表数量上限（用于分页），默认 200，传 None 表示不分页。
+        offset: 分页起始偏移量，默认 0。
+
     Returns:
-        JSON 字符串格式的数据库结构信息。
+        JSON 字符串格式的数据库结构信息，只包含表名与列名。
 
     Raises:
         ToolError: 当查询失败时抛出。
@@ -104,6 +109,18 @@ async def get_database_schema(
 
     if schemas is None:
         schemas = ["rag_document", "public", "agent_backend"]
+    if limit is not None and limit <= 0:
+        raise ToolError(
+            "分页参数 limit 必须为正数",
+            code="db_schema_invalid_limit",
+            details={"limit": limit},
+        )
+    if offset < 0:
+        raise ToolError(
+            "分页参数 offset 不能为负数",
+            code="db_schema_invalid_offset",
+            details={"offset": offset},
+        )
 
     try:
         from psycopg import AsyncConnection
@@ -117,7 +134,6 @@ async def get_database_schema(
         )
 
         schema_data: Dict[str, Any] = {}
-        have_schemas: List[str] = []
 
         async with conn.cursor() as cursor:
             placeholders = ",".join(["%s"] * len(schemas))
@@ -132,62 +148,53 @@ async def get_database_schema(
             )
             existing_schemas = [row[0] for row in await cursor.fetchall()]
 
-            for schema in existing_schemas:
-                have_schemas.append(schema)
+            await cursor.execute(
+                f"""
+                SELECT n.nspname AS schema_name,
+                       c.relname AS table_name
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE c.relkind = 'r'
+                  AND n.nspname IN ({placeholders})
+                ORDER BY n.nspname, c.relname;
+            """,
+                tuple(schemas),
+            )
+            all_tables = [(row[0], row[1]) for row in await cursor.fetchall()]
 
+            if limit is None:
+                paged_tables = all_tables[offset:]
+            else:
+                paged_tables = all_tables[offset: offset + limit]
+
+            for schema_name, table_name in paged_tables:
                 await cursor.execute(
                     """
-                    SELECT c.relname AS table_name,
-                           COALESCE(obj_description(c.oid, 'pg_class'), '无注释') AS table_comment
-                    FROM pg_class c
+                    SELECT a.attname AS column_name
+                    FROM pg_attribute a
+                    JOIN pg_class c ON c.oid = a.attrelid
                     JOIN pg_namespace n ON n.oid = c.relnamespace
-                    WHERE c.relkind = 'r'
+                    WHERE c.relname = %s
                       AND n.nspname = %s
-                    ORDER BY table_name;
+                      AND a.attnum > 0
+                      AND NOT a.attisdropped
+                    ORDER BY a.attnum;
                 """,
-                    (schema,),
+                    (table_name, schema_name),
                 )
-                tables = await cursor.fetchall()
+                columns = [row[0] for row in await cursor.fetchall()]
 
-                schema_tables = []
-                for table_name, table_comment in tables:
-                    await cursor.execute(
-                        """
-                        SELECT a.attname AS column_name,
-                               COALESCE(col_description(a.attrelid, a.attnum), '无注释') AS column_comment
-                        FROM pg_attribute a
-                        JOIN pg_class c ON c.oid = a.attrelid
-                        JOIN pg_namespace n ON n.oid = c.relnamespace
-                        WHERE c.relname = %s
-                          AND n.nspname = %s
-                          AND a.attnum > 0
-                          AND NOT a.attisdropped
-                        ORDER BY a.attnum;
-                    """,
-                        (table_name, schema),
-                    )
-                    columns = await cursor.fetchall()
-
-                    column_list = [
-                        {"name": col_name, "column_comment": col_comment}
-                        for col_name, col_comment in columns
-                    ]
-
-                    schema_tables.append(
-                        {
-                            "table_name": table_name,
-                            "table_comment": table_comment,
-                            "columns": column_list,
-                        }
-                    )
-
-                schema_data[schema] = schema_tables
-
-        schema_data["have_schemas"] = have_schemas
+                schema_tables = schema_data.setdefault(schema_name, [])
+                schema_tables.append(
+                    {
+                        "table_name": table_name,
+                        "columns": columns,
+                    }
+                )
 
         await conn.close()
 
-        logger.info("获取数据库结构成功，共 %s 个 schema", len(have_schemas))
+        logger.info("获取数据库结构成功，共 %s 个 schema", len(existing_schemas))
 
         return json.dumps(schema_data, ensure_ascii=False, indent=2)
 
@@ -196,7 +203,7 @@ async def get_database_schema(
         raise ToolError(
             "数据库信息查询失败",
             code="db_schema_fetch_failed",
-            details={"schemas": schemas},
+            details={"schemas": schemas, "limit": limit, "offset": offset},
             cause=e,
         ) from e
 
@@ -556,7 +563,7 @@ CHECK_DATABASE_CONNECTION_SPEC = ToolSpec(
 
 GET_DATABASE_SCHEMA_SPEC = ToolSpec(
     name="get_database_schema",
-    description="获取数据库结构信息（表名、列名、注释）。",
+    description="获取数据库结构信息（表名、列名），支持分页。",
     parameters={
         "type": "object",
         "properties": {
@@ -564,6 +571,14 @@ GET_DATABASE_SCHEMA_SPEC = ToolSpec(
                 "type": "array",
                 "items": {"type": "string"},
                 "description": "需要查询的 schema 列表，可选。",
+            },
+            "limit": {
+                "type": "integer",
+                "description": "每次返回的表数量上限（用于分页）。",
+            },
+            "offset": {
+                "type": "integer",
+                "description": "分页起始偏移量。",
             },
         },
         "required": [],

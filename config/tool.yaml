@@ -58,6 +58,108 @@ agents:
         timeout: 30.0
         max_calls: 5
 
+  # ========== SQL Worker ==========
+  sql-worker:
+    defaults:
+      timeout: 60.0
+      max_calls: 3
+    tools:
+      sql_check_connection:
+        timeout: 10.0
+        max_calls: 2
+      sql_get_schema:
+        timeout: 30.0
+        max_calls: 2
+      generate_sql:
+        timeout: 60.0
+        max_calls: 2
+      validate_sql:
+        timeout: 20.0
+        max_calls: 3
+      correct_sql:
+        timeout: 60.0
+        max_calls: 2
+      execute_sql:
+        timeout: 60.0
+        max_calls: 2
+
+
+  # ========== RAG Worker ==========
+  rag-worker:
+    defaults:
+      timeout: 120.0
+      max_calls: 3
+    tools:
+      identify_intent:
+        timeout: 10.0
+        max_calls: 5
+      rewrite_query_and_extract_keywords:
+        timeout: 60.0
+        max_calls: 2
+      parallel_identify_intent:
+        timeout: 30.0
+        max_calls: 2
+      parallel_execute_queries:
+        timeout: 120.0
+        max_calls: 2
+      search_local:
+        timeout: 60.0
+        max_calls: 3
+      search_global:
+        timeout: 120.0
+        max_calls: 2
+      search_images:
+        timeout: 30.0
+        max_calls: 3
+      search_tables:
+        timeout: 30.0
+        max_calls: 3
+      evaluate_quality:
+        timeout: 30.0
+        max_calls: 5
+      json_to_markdown:
+        timeout: 10.0
+        max_calls: 5
+
+
+  # ========== NEO4j Worker ==========
+  neo4j-worker:
+    defaults:
+      timeout: 60.0
+      max_calls: 3
+    tools:
+      neo4j_check_connection:
+        timeout: 10.0
+        max_calls: 2
+      neo4j_get_schema:
+        timeout: 20.0
+        max_calls: 2
+      generate_cypher:
+        timeout: 60.0
+        max_calls: 2
+      validate_cypher:
+        timeout: 20.0
+        max_calls: 3
+      correct_cypher:
+        timeout: 60.0
+        max_calls: 2
+      execute_cypher:
+        timeout: 60.0
+        max_calls: 2
+
+
+  # ========== MAP Worker ==========
+  map-worker:
+    defaults:
+      timeout: 30.0
+      max_calls: 3
+    tools:
+      gaode_driving_route:
+        timeout: 30.0
+        max_calls: 3
+
+
+
 # 配置查找优先级：
 # 1. agents.<agent_name>.tools.<tool_name>.<parameter>
 # 2. agents.<agent_name>.defaults.<parameter>
