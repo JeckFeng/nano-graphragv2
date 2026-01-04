@@ -134,7 +134,7 @@ async def _fetch_driving_route(
         "key": api_key,
         "origin": origin,
         "destination": destination,
-        "show_fields": "polyline",
+        "show_fields": "polyline,cost",
     }
 
     try:

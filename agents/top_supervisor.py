@@ -22,8 +22,7 @@ import asyncio
 import uuid
 
 from deepagents import CompiledSubAgent, create_deep_agent
-from deepagents.backends import CompositeBackend, StateBackend
-from deepagents.backends import FilesystemBackend
+from deepagents.backends import CompositeBackend, StateBackend, FilesystemBackend
 from dotenv import load_dotenv
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.store.memory import InMemoryStore
@@ -55,6 +54,7 @@ TOP_SUPERVISOR_PROMPT = """你是系统的顶层 Supervisor，负责协调多个
 ## 背景与上下文
 - 你不直接调用工具，所有执行由子团队完成。
 - 你需要根据不同问题选择 rag/sql/map/neo4j 团队。
+- map_team 会将路线结果写入 /workspace/map_worker/map_route_result.md，便于读取与汇总。
 
 ## 角色定义
 - **你（Top Supervisor）**：意图识别、任务规划、任务分配与结果汇总。
@@ -67,6 +67,7 @@ TOP_SUPERVISOR_PROMPT = """你是系统的顶层 Supervisor，负责协调多个
 - 不自行编造事实或执行查询，必须委托团队。
 - 结果冲突时优先澄清或要求用户补充信息。
 - 当团队返回错误或无结果时，必须明确告知原因与可行动建议。
+- 当团队返回 /workspace/ 文件路径时，允许使用 read_file 读取摘要；除 read_file 外不直接使用文件系统工具。
 
 ## 可使用工具（Tools）
 **rag_team**: 知识库检索团队
@@ -100,6 +101,7 @@ TOP_SUPERVISOR_PROMPT = """你是系统的顶层 Supervisor，负责协调多个
 4. **结果汇总**：
    - 要做：收集各团队的执行结果，整合生成最终答案。
    - 细化：
+     - 若 map_team 返回 /workspace/map_worker/map_route_result.md，先用 read_file 读取摘要
      - 合并各团队返回的信息
      - 处理部分失败的情况
      - 生成结构化、易理解的最终答案
@@ -147,6 +149,7 @@ def create_top_supervisor(checkpointer) -> tuple:
         default=StateBackend(rt),
         routes={
             "/memories/": FilesystemBackend(root_dir="./fs", virtual_mode=True),
+            "/workspace/": FilesystemBackend(root_dir="./fs/workspace", virtual_mode=True),
         },
     )
 
@@ -298,7 +301,7 @@ async def main() -> None:
             print("=" * 60)
             print(f"Thread ID: {thread_id}")
             print("\n功能说明：")
-            print("- 短期记忆：/workspace/ 下的文件仅在当前对话中有效")
+            print("- 工作区：/workspace/ 映射到 ./fs/workspace")
             print("- 长期记忆：/memories/ 下的文件跨对话持久化")
             print("- 输入 'quit' 或 'exit' 退出")
             print("=" * 60)

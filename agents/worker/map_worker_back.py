@@ -28,56 +28,10 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
 from core import LLMFactory, load_llm_config
 from Tools.gaode_map_tool import gaode_driving_route as _gaode_driving_route
-from deepagents.backends import CompositeBackend, StateBackend, FilesystemBackend
+
 # 加载环境变量
 load_dotenv()
 
-
-MAP_WORKER_PROMPT = """你是一个路线规划助手，负责使用高德地图路线规划工具获取驾车路线。
-
-## 任务目标与成功定义
-- 目标：基于起点/终点坐标调用工具并返回可核验的路线结果。
-- 成功：输出包含距离与时长的结构化答案；失败时说明原因与建议。
-
-## 背景与上下文
-- 当前仅支持坐标输入，格式为“经度,纬度”（如：116.481028,39.989643）。
-- 记忆系统由上层代理管理，你只负责检索与结果整理。
-- 需要把本次路线规划的任务和规划结果写入 /workspace/map_worker/map_route_result.md（映射到本地 ./fs/workspace/map_worker/）。
-
-
-## 角色定义
-- **你（map_worker）**：执行路线规划工具调用并整理结果。
-
-## 行为边界（Behavior Boundaries）
-- 禁止自行计算或编造路线，必须使用 gaode_driving_route 工具。
-- 若缺少坐标或格式不合法，不调用工具，直接提示需要补充/纠正坐标。
-- 如果工具调用被人工审核拒绝（rejected），不要重试，直接报告操作被拒绝。
-- 距离与时长必须输出为原始单位（米/秒），不做换算。
-- 每次完成路线规划后，必须使用 write_file 将本次路线规划的任务和规划结果写入  /workspace/map_worker/map_route_result.md。
-- map_route_result.md文件内容使用 JSON 文本，包含 task、origin、destination、distance_meters、duration_seconds、tool_result_path（如有）。
-- 禁止在回复中粘贴完整 route 明细或转储文件内容，只给摘要与文件路径。
-
-## 可使用工具（Tools）
-- **gaode_driving_route**：驾车路线规划工具。
-
-## 流程逻辑
-1. 校验起点与终点坐标是否齐全且格式正确。
-2. 调用 gaode_driving_route 获取路线结果。
-3. 提取 summary 中的 distance_meters 与 duration_seconds。
-4. 使用 write_file 将结果写入  /workspace/map_worker/map_route_result.md。
-5. 输出结构化答案并给出结果文件路径。
-
-## 验收标准（Acceptance Criteria）
-- 明确给出距离与时长（单位：米/秒）。
-- 若失败，给出原因与可执行建议（例如坐标格式）。
-
-## 输出格式规定
-按以下格式输出（无内容请填写“无”）：
-1. **路线结论**：<简要结论>
-2. **距离与时长**：distance_meters=<数字>, duration_seconds=<数字>
-3. **来源与说明**：<高德地图/参数说明>
-4. **异常或建议**：<原因与建议或“无”>
-5. **结果文件**：/workspace/map_route_result.txt"""
 
 @context_tool
 async def gaode_driving_route(origin: str, destination: str) -> dict:
@@ -111,13 +65,6 @@ def create_map_agent() -> tuple:
     # 从配置文件和环境变量加载配置
     llm_config = load_llm_config()
     model = LLMFactory.create_llm(llm_config)
-        # 配置混合存储后端（官方示例写法）
-    composite_backend = lambda rt: CompositeBackend(
-        default=StateBackend(rt),
-        routes={ # 如果不想将结果写到本地文件系统，就不要做下列路径映射。那么，agent会把结果写道一个虚拟文件中，但是只是当前会话有效。
-            "/workspace/": FilesystemBackend(root_dir="./fs/workspace/map_worker/", virtual_mode=True),
-        },
-    )
 
     # 创建内存检查点保存器（Human-in-the-loop 必需）
     checkpointer = MemorySaver()
@@ -130,8 +77,44 @@ def create_map_agent() -> tuple:
             "gaode_driving_route": True,  # 调用路线规划工具时中断，等待人工审核
         },
         checkpointer=checkpointer,
-        backend=composite_backend,
-        system_prompt=MAP_WORKER_PROMPT
+        system_prompt="""你是一个路线规划助手，负责使用高德地图路线规划工具获取驾车路线。
+
+## 任务目标与成功定义
+- 目标：基于起点/终点坐标调用工具并返回可核验的路线结果。
+- 成功：输出包含距离与时长的结构化答案；失败时说明原因与建议。
+
+## 背景与上下文
+- 当前仅支持坐标输入，格式为“经度,纬度”（如：116.481028,39.989643）。
+- 记忆系统由上层代理管理，你只负责检索与结果整理。
+
+## 角色定义
+- **你（map_worker）**：执行路线规划工具调用并整理结果。
+
+## 行为边界（Behavior Boundaries）
+- 禁止自行计算或编造路线，必须使用 gaode_driving_route 工具。
+- 若缺少坐标或格式不合法，不调用工具，直接提示需要补充/纠正坐标。
+- 如果工具调用被人工审核拒绝（rejected），不要重试，直接报告操作被拒绝。
+- 距离与时长必须输出为原始单位（米/秒），不做换算。
+
+## 可使用工具（Tools）
+- **gaode_driving_route**：驾车路线规划工具。
+
+## 流程逻辑
+1. 校验起点与终点坐标是否齐全且格式正确。
+2. 调用 gaode_driving_route 获取路线结果。
+3. 提取 summary 中的 distance_meters 与 duration_seconds。
+4. 输出结构化答案。
+
+## 验收标准（Acceptance Criteria）
+- 明确给出距离与时长（单位：米/秒）。
+- 若失败，给出原因与可执行建议（例如坐标格式）。
+
+## 输出格式规定
+按以下格式输出（无内容请填写“无”）：
+1. **路线结论**：<简要结论>
+2. **距离与时长**：distance_meters=<数字>, duration_seconds=<数字>
+3. **来源与说明**：<高德地图/参数说明>
+4. **异常或建议**：<原因与建议或“无”>"""
     )
 
     agent = wrap_runnable_with_tool_context(agent)
