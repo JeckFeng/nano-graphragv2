@@ -29,7 +29,7 @@ from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
 from core.tool_context import wrap_runnable_with_tool_context
-
+from core import LLMFactory, load_llm_config
 # 导入已有的代理实现
 from agents.worker.map_worker import create_map_agent as create_map_worker_agent
 
@@ -101,12 +101,10 @@ def create_map_team_agent() -> tuple:
     if not api_key:
         raise ValueError("DASHSCOPE_API_KEY 环境变量未设置")
 
-    # 初始化 DashScope 模型（使用 ChatOpenAI 封装）
-    model = ChatOpenAI(
-        model="qwen-plus",
-        openai_api_base="https://dashscope.aliyuncs.com/compatible-mode/v1",
-        openai_api_key=api_key,
-    )
+    # 使用 LLM 工厂创建模型实例
+    # 从配置文件和环境变量加载配置
+    llm_config = load_llm_config()
+    model = LLMFactory.create_llm(llm_config)
 
     # 创建内存检查点保存器（Human-in-the-loop 必需）
     checkpointer = MemorySaver()
