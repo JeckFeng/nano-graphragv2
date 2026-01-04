@@ -15,7 +15,6 @@ from typing import Any, Dict, Optional
 import logging
 import os
 import re
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 import aiohttp
 from dotenv import load_dotenv
@@ -35,8 +34,7 @@ logger = logging.getLogger(__name__)
 
 _BASE_URL = "https://restapi.amap.com/v5/direction/driving"
 _GET_MAX_LENGTH = 2048
-_COORD_PATTERN = re.compile(r"^-?\d+(?:\.\d+)?,-?\d+(?:\.\d+)?$")
-_COORD_PRECISION = Decimal("0.000001")
+_COORD_PATTERN = re.compile(r"^-?\d+\.\d{1,6},-?\d+\.\d{1,6}$")
 
 
 def _load_api_key(api_key: Optional[str]) -> str:
@@ -60,58 +58,16 @@ def _load_api_key(api_key: Optional[str]) -> str:
     return key
 
 
-def _normalize_coordinates(
-    coord: str,
-    *,
-    label: str,
-    code: str,
-    detail_key: str,
-) -> str:
-    """规范化经纬度坐标并四舍五入到小数点后 6 位。
+def _validate_coordinates(coord: str) -> bool:
+    """验证经纬度格式。
 
     Args:
         coord: 经纬度字符串，格式为“经度,纬度”。
-        label: 坐标名称（用于错误提示，如“起点”/“终点”）。
-        code: 错误码。
-        detail_key: details 字段中的键名。
 
     Returns:
-        规范化后的经纬度字符串，格式为“经度,纬度”。
-
-    Raises:
-        ToolError: 当坐标格式错误时抛出。
+        是否符合格式要求。
     """
-    text = coord.strip() if coord is not None else ""
-    parts = [part.strip() for part in text.split(",")]
-    if len(parts) != 2 or not parts[0] or not parts[1]:
-        raise ToolError(
-            f"{label}经纬度格式错误",
-            code=code,
-            details={detail_key: coord},
-        )
-
-    normalized_text = f"{parts[0]},{parts[1]}"
-    if not _COORD_PATTERN.match(normalized_text):
-        raise ToolError(
-            f"{label}经纬度格式错误",
-            code=code,
-            details={detail_key: coord},
-        )
-
-    try:
-        longitude = Decimal(parts[0])
-        latitude = Decimal(parts[1])
-    except InvalidOperation as exc:
-        raise ToolError(
-            f"{label}经纬度格式错误",
-            code=code,
-            details={detail_key: coord},
-            cause=exc,
-        ) from exc
-
-    longitude = longitude.quantize(_COORD_PRECISION, rounding=ROUND_HALF_UP)
-    latitude = latitude.quantize(_COORD_PRECISION, rounding=ROUND_HALF_UP)
-    return f"{longitude:.6f},{latitude:.6f}"
+    return bool(_COORD_PATTERN.match(coord))
 
 
 def _should_use_post(params: Dict[str, str]) -> bool:
@@ -160,18 +116,19 @@ async def _fetch_driving_route(
     Raises:
         ToolError: 当参数不合法、API 调用失败或网络异常时抛出。
     """
-    origin = _normalize_coordinates(
-        origin,
-        label="起点",
-        code="gaode_invalid_origin",
-        detail_key="origin",
-    )
-    destination = _normalize_coordinates(
-        destination,
-        label="终点",
-        code="gaode_invalid_destination",
-        detail_key="destination",
-    )
+    if not _validate_coordinates(origin):
+        raise ToolError(
+            "起点经纬度格式错误",
+            code="gaode_invalid_origin",
+            details={"origin": origin},
+        )
+
+    if not _validate_coordinates(destination):
+        raise ToolError(
+            "终点经纬度格式错误",
+            code="gaode_invalid_destination",
+            details={"destination": destination},
+        )
 
     params = {
         "key": api_key,
@@ -231,8 +188,8 @@ async def gaode_driving_route(
     """高德驾车路线规划工具。
 
     Args:
-        origin: 起点经纬度，格式为“经度,纬度”，超出 6 位小数会自动四舍五入。
-        destination: 终点经纬度，格式为“经度,纬度”，超出 6 位小数会自动四舍五入。
+        origin: 起点经纬度，格式为“经度,纬度”。
+        destination: 终点经纬度，格式为“经度,纬度”。
         api_key: 高德地图 API Key，可选，默认读取环境变量。
 
     Returns:
@@ -265,14 +222,14 @@ GAODE_DRIVING_ROUTE_SPEC = ToolSpec(
         "properties": {
             "origin": {
                 "type": "string",
-                "description": "起点经纬度，格式为'经度,纬度'，超出6位小数会自动四舍五入。",
-                "pattern": r"^-?\d+(?:\.\d+)?,-?\d+(?:\.\d+)?$",
+                "description": "起点经纬度，格式为'经度,纬度'，小数点后不超过6位。",
+                "pattern": r"^-?\d+\.\d{1,6},-?\d+\.\d{1,6}$",
                 "examples": ["116.321384,39.904317"],
             },
             "destination": {
                 "type": "string",
-                "description": "终点经纬度，格式为'经度,纬度'，超出6位小数会自动四舍五入。",
-                "pattern": r"^-?\d+(?:\.\d+)?,-?\d+(?:\.\d+)?$",
+                "description": "终点经纬度，格式为'经度,纬度'，小数点后不超过6位。",
+                "pattern": r"^-?\d+\.\d{1,6},-?\d+\.\d{1,6}$",
                 "examples": ["116.587927,40.080102"],
             },
             "api_key": {
