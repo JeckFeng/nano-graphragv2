@@ -38,9 +38,6 @@
 - `GET /v1/conversations/{thread_id}/messages?user_id=...`
   - 拉取历史消息（便于前端回显）
 
-- `GET /v1/artifacts/{artifact_id}?user_id=...`
-  - 拉取大 JSON 或长文本（不走 WS）
-
 - `WS /v1/ws/chat?user_id=...&thread_id=...`
   - 进行流式问答
 
@@ -94,10 +91,8 @@
   "artifacts": [
     {
       "kind": "tool_result",
-      "artifact_id": "a-001",
-      "media_type": "application/json",
-      "size_bytes": 24567,
-      "checksum": "sha256:..."
+      "path": "/workspace/map_route_result.txt",
+      "media_type": "text/plain"
     }
   ],
   "usage": {
@@ -127,21 +122,6 @@
 ```json
 { "type": "ping" }
 ```
-
-### 3.7 Artifact 元数据结构（WS 中返回）
-
-```json
-{
-  "artifact_id": "a-001",
-  "kind": "tool_result",
-  "media_type": "application/json",
-  "size_bytes": 24567,
-  "checksum": "sha256:..."
-}
-```
-
-说明：
-- WS 只返回 artifact 元数据，完整 JSON 通过 REST 拉取。
 
 ## 4. WebSocket 状态机（MVP）
 
@@ -210,21 +190,6 @@ class MessageService:
     async def update_message_content(self, message_id: int, content: str) -> None: ...
 ```
 
-### 5.4 ArtifactService
-```python
-class ArtifactService:
-    async def create_artifact(
-        self,
-        thread_id: str,
-        message_id: int,
-        kind: str,
-        media_type: str,
-        content: str | bytes,
-    ) -> Artifact: ...
-
-    async def get_artifact(self, artifact_id: str) -> Artifact | None: ...
-```
-
 ### 5.4 ChatService（核心）
 ```python
 class ChatService:
@@ -257,9 +222,7 @@ class AgentRunner:
 {
   "type": "token" | "final" | "tool_result",
   "content": "...",
-  "artifacts": [
-    { "artifact_id": "a-001", "media_type": "application/json" }
-  ]
+  "tool_path": "/workspace/..."  
 }
 ```
 
@@ -297,11 +260,7 @@ class TopSupervisorRunner(AgentRunner):
 
 说明：
 - 上述只展示统一入口，具体事件映射需要根据 LangGraph/DeepAgents 实际返回结构微调。
-- 对于大型工具结果，在服务层生成 artifact 并返回 `artifact_id`，前端通过 REST 拉取。
-
-### 6.5 MVP 策略（你当前的取舍）
-- 先实现 `final` 一次性输出，保证端到端跑通。
-- 预留 `astream_events` 的事件映射入口，后续再切换到流式输出。
+- 对于大型工具结果，可由 worker 写入 `/workspace/`，在 `tool_result` 事件中返回文件路径。
 
 ## 7. 数据库表设计（PostgreSQL）
 
@@ -324,19 +283,6 @@ class TopSupervisorRunner(AgentRunner):
 - `role` TEXT CHECK IN ('user','assistant','tool')
 - `content` TEXT
 - `tool_payload` JSONB NULL
-- `created_at` TIMESTAMPTZ
-
-索引：`(thread_id, created_at)`
-
-### 7.4 artifacts
-- `id` TEXT PK  (artifact_id)
-- `thread_id` UUID FK(threads.id)
-- `message_id` BIGINT FK(messages.id)
-- `kind` TEXT
-- `media_type` TEXT
-- `storage_path` TEXT
-- `size_bytes` BIGINT
-- `checksum` TEXT
 - `created_at` TIMESTAMPTZ
 
 索引：`(thread_id, created_at)`
@@ -375,7 +321,6 @@ migrations/
 ### 阶段 1：用户绑定与历史查询
 - 实现 `GET /v1/conversations`
 - 实现 `GET /v1/conversations/{thread_id}/messages`
-- 实现 `GET /v1/artifacts/{artifact_id}`（REST 拉取大 JSON）
 - 服务层完成 user_id/thread_id 绑定校验
 
 ### 阶段 2：WS 流式问答
@@ -388,26 +333,3 @@ migrations/
 - 连接心跳、断线重连
 - 日志与指标
 
-## 10. Artifact 拉取接口格式与最小实现步骤
-
-### 10.1 REST 接口格式（MVP）
-
-- `GET /v1/artifacts/{artifact_id}?user_id=...`
-  - 行为：返回 artifact 原始内容（JSON / 纯文本）
-  - 响应头：`Content-Type` 使用 artifact 的 `media_type`
-
-示例响应（JSON）：
-```json
-{
-  "status": "1",
-  "route": { "...": "完整高德 API JSON" }
-}
-```
-
-### 10.2 最小实现步骤
-
-1. 在服务层新增 `ArtifactService`，提供 `create_artifact` 与 `get_artifact`。
-2. 在 ChatService 中检测“超大 JSON”，将内容存入文件或对象存储，记录 `artifact_id` 与 `storage_path`。
-3. 在 WS 的 `final` 消息里返回 `artifact_id`（不传完整 JSON）。
-4. 在 `GET /v1/artifacts/{artifact_id}` 中校验 `user_id` 是否拥有该 `thread_id`。
-5. 返回 artifact 的原始内容与正确的 `media_type`。
