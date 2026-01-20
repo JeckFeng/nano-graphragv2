@@ -1,0 +1,41 @@
+"""Thread service providing access to conversation threads."""
+
+from __future__ import annotations
+
+from typing import Optional
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.infra.models import Thread
+
+
+class ThreadService:
+    """Service for thread data access.
+
+    Invariants:
+        - The session must remain valid during the service lifecycle.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        """Initialize the service with an async session.
+
+        Args:
+            session: SQLAlchemy async session.
+        """
+        self._session = session
+
+    async def create_thread(self, user_id: int, title: Optional[str] = None) -> Thread:
+        """Create a new thread for a user.
+
+        Args:
+            user_id: Internal user identifier.
+            title: Optional thread title.
+
+        Returns:
+            Thread: Newly created thread.
+        """
+        thread = Thread(user_id=user_id, title=title)
+        self._session.add(thread)
+        await self._session.commit()
+        await self._session.refresh(thread)
+        return thread

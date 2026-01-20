@@ -1,0 +1,50 @@
+"""API routes for the MVP service."""
+
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends, status
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.infra.db import get_session
+from app.schemas.requests import CreateConversationRequest
+from app.schemas.responses import CreateConversationResponse, HealthResponse
+from app.services.conversation_service import ConversationService
+
+router = APIRouter()
+v1_router = APIRouter(prefix="/v1")
+
+
+@router.get("/healthz", response_model=HealthResponse, status_code=status.HTTP_200_OK)
+async def health_check() -> HealthResponse:
+    """Return basic health status for the service.
+
+    Returns:
+        HealthResponse: Health response payload.
+    """
+    return HealthResponse(status="ok")
+
+
+@v1_router.post(
+    "/conversations",
+    response_model=CreateConversationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_conversation(
+    payload: CreateConversationRequest,
+    session: AsyncSession = Depends(get_session),
+) -> CreateConversationResponse:
+    """Create a new conversation thread for a user.
+
+    Args:
+        payload: Conversation creation request.
+        session: Database session dependency.
+
+    Returns:
+        CreateConversationResponse: Response payload.
+    """
+    service = ConversationService(session)
+    thread = await service.create_conversation(payload.user_id, payload.title)
+    return CreateConversationResponse(thread_id=str(thread.id), created_at=thread.created_at)
+
+
+router.include_router(v1_router)

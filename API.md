@@ -305,6 +305,11 @@ class TopSupervisorRunner(AgentRunner):
 
 ## 7. 数据库表设计（PostgreSQL）
 
+### 7.0 Schema 配置与初始化
+- 业务表统一放在 `business_schema` 指定的 Schema 中（默认 `agent_app`）。
+- 配置入口：`config/settings.py` 的 `business_schema`（环境变量 `BUSINESS_SCHEMA`）。
+- 通过 psycopg 初始化业务表：`python -m scripts.init_business_schema`
+
 ### 7.1 users
 - `id` BIGSERIAL PK
 - `external_user_id` TEXT UNIQUE NOT NULL

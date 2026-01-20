@@ -57,10 +57,6 @@ class Settings(BaseSettings):
         default="mydb",
         description="业务数据库名",
     )
-    business_schema: str = Field(
-        default="agent_app",
-        description="业务数据 Schema 名称",
-    )
     langgraph_memory_db: str = Field(
         default="langgraph_memory",
         description="LangGraph 记忆数据库名",

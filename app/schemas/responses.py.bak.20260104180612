@@ -1,0 +1,20 @@
+"""Response schemas for the MVP API."""
+
+from __future__ import annotations
+
+from datetime import datetime
+
+from pydantic import BaseModel, Field
+
+
+class HealthResponse(BaseModel):
+    """Health check response payload."""
+
+    status: str = Field(..., examples=["ok"])
+
+
+class CreateConversationResponse(BaseModel):
+    """Response payload for conversation creation."""
+
+    thread_id: str = Field(..., examples=["uuid"])
+    created_at: datetime

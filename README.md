@@ -1044,3 +1044,37 @@ Team1 Agent 能够处理子代理的中断请求，核心机制包括：
 - [LangGraph Interrupts 文档](https://docs.langchain.com/oss/python/langgraph/interrupts)
 - [Deep Agents Human-in-the-loop 文档](https://docs.langchain.com/oss/python/deepagents/human-in-the-loop)
 - [Deep Agents Subagents 文档](https://docs.langchain.com/oss/python/deepagents/subagents)
+
+---
+
+## API 服务启动与测试
+
+### 启动服务
+
+1. 准备环境变量（读取 `.env`），确保最少包含：
+   - 数据库连接（`DB_HOST`/`DB_PORT`/`DB_NAME`/`DB_USER`/`DB_PASSWORD` 等）
+   - LangGraph 记忆库数据库名（`LANGGRAPH_MEMORY_DB`）
+   - LLM 密钥（例如 `DASHSCOPE_API_KEY` 或 `DEEPSEEK_API_KEY`）
+   - 高德地图密钥（`AMAP_API_KEY`）
+2. 启动 FastAPI 服务：
+   ```bash
+   uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+   ```
+
+### 执行完整会话流程测试
+
+测试脚本路径：`tests/api_tests/test_api_conversation_flow.py`
+
+安装测试依赖：
+```bash
+pip install httpx websockets
+```
+
+```bash
+python tests/api_tests/test_api_conversation_flow.py --base-url http://localhost:8001 --user-id api-test-user --timeout 300
+```
+
+可选环境变量：
+- `NANO_GRAPHRAG_API_URL`：默认 `http://localhost:8000`
+- `NANO_GRAPHRAG_USER_ID`：默认 `api-test-user`
+- `--timeout`：控制 HTTP 请求与 WebSocket 等待/心跳超时（默认 120 秒）

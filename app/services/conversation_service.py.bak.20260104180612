@@ -1,0 +1,43 @@
+"""Conversation service orchestrating user and thread creation."""
+
+from __future__ import annotations
+
+from typing import Optional
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.infra.models import Thread
+from app.services.thread_service import ThreadService
+from app.services.user_service import UserService
+
+
+class ConversationService:
+    """Service for conversation orchestration.
+
+    Invariants:
+        - The session must remain valid during the service lifecycle.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        """Initialize the service with an async session.
+
+        Args:
+            session: SQLAlchemy async session.
+        """
+        self._session = session
+        self._user_service = UserService(session)
+        self._thread_service = ThreadService(session)
+
+    async def create_conversation(self, external_user_id: str, title: Optional[str]) -> Thread:
+        """Create a conversation thread for a user.
+
+        Args:
+            external_user_id: External user identifier.
+            title: Optional thread title.
+
+        Returns:
+            Thread: Newly created thread.
+        """
+        user = await self._user_service.get_or_create_user(external_user_id)
+        thread = await self._thread_service.create_thread(user.id, title)
+        return thread
