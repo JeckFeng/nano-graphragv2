@@ -1,0 +1,15 @@
+import { defineStore } from 'pinia'
+import { ref, watch } from 'vue'
+
+export const useThemeStore = defineStore('theme', () => {
+  const isDark = ref(localStorage.getItem('theme') === 'dark')
+
+  watch(isDark, (val) => {
+    document.documentElement.setAttribute('data-theme', val ? 'dark' : 'light')
+    localStorage.setItem('theme', val ? 'dark' : 'light')
+  }, { immediate: true })
+
+  const toggle = () => { isDark.value = !isDark.value }
+
+  return { isDark, toggle }
+})

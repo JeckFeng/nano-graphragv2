@@ -1,0 +1,23 @@
+:root {
+  --bg: #f7f7f2;
+  --panel: #ffffff;
+  --text: #1a1a1a;
+  --muted: #6b6b6b;
+  --primary: #0f4c3a;
+  --accent: #d68c45;
+  --border: #e5e5e5;
+  --bubble-user: #0f4c3a;
+  --bubble-ai: #f1efe9;
+}
+
+[data-theme="dark"] {
+  --bg: #121212;
+  --panel: #1b1b1b;
+  --text: #f2f2f2;
+  --muted: #a0a0a0;
+  --primary: #9ad1b3;
+  --accent: #e3a86f;
+  --border: #2a2a2a;
+  --bubble-user: #2f6d57;
+  --bubble-ai: #1f1f1f;
+}

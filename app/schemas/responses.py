@@ -48,3 +48,40 @@ class MessageListResponse(BaseModel):
     """Response payload for listing messages."""
 
     messages: List[MessageResponse]
+
+
+class ApprovalInterruptResponse(BaseModel):
+    """Interrupt payload for approval responses."""
+
+    interrupt_id: str
+    action_requests: List[dict]
+    review_configs: List[dict]
+
+
+class ApprovalRecordResponse(BaseModel):
+    """Approval record response payload."""
+
+    approval_id: str
+    thread_id: str
+    user_id: str
+    status: str
+    created_at: datetime
+    resolved_at: Optional[datetime]
+    interrupts: List[ApprovalInterruptResponse]
+    decision: Optional[str]
+    result_content: Optional[str]
+
+
+class ApprovalListResponse(BaseModel):
+    """Response payload for listing approvals."""
+
+    approvals: List[ApprovalRecordResponse]
+
+
+class ApprovalResolutionResponse(BaseModel):
+    """Response payload for approval resolution."""
+
+    approval_id: str
+    status: str
+    result_content: Optional[str]
+    next_approval: Optional[ApprovalRecordResponse]

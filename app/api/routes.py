@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
@@ -13,8 +13,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.agent_runner import TopSupervisorRunner
 from app.infra.db import get_session
-from app.schemas.requests import CreateConversationRequest
+from app.schemas.requests import ApprovalDecisionRequest, CreateConversationRequest
 from app.schemas.responses import (
+    ApprovalListResponse,
+    ApprovalRecordResponse,
+    ApprovalResolutionResponse,
     ConversationListResponse,
     ConversationSummaryResponse,
     CreateConversationResponse,
@@ -22,9 +25,11 @@ from app.schemas.responses import (
     MessageListResponse,
     MessageResponse,
 )
+from app.services.approval_service import ApprovalService
 from app.services.artifact_service import ArtifactService
 from app.services.chat_service import ChatService
 from app.services.conversation_service import ConversationService
+from app.services.message_service import MessageService
 from config.settings import get_settings
 
 router = APIRouter()
@@ -172,6 +177,123 @@ async def get_artifact(
     )
 
 
+@v1_router.get(
+    "/approvals",
+    response_model=ApprovalListResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def list_approvals(
+    user_id: str = Query(..., min_length=1, max_length=128),
+    status_filter: Optional[str] = Query(default=None, alias="status"),
+    thread_id: Optional[str] = Query(default=None),
+    limit: int = Query(20, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+) -> ApprovalListResponse:
+    """List approvals for a user.
+
+    Args:
+        user_id: External user identifier.
+        status_filter: Optional approval status filter.
+        thread_id: Optional thread filter.
+        limit: Maximum number of approvals to return.
+        offset: Offset for pagination.
+
+    Returns:
+        ApprovalListResponse: Response payload.
+    """
+    service = ApprovalService()
+    approvals = await service.list_approvals(
+        user_id=user_id,
+        status=status_filter,
+        thread_id=thread_id,
+        limit=limit,
+        offset=offset,
+    )
+    return ApprovalListResponse(approvals=[_map_approval_record(record) for record in approvals])
+
+
+@v1_router.get(
+    "/approvals/{approval_id}",
+    response_model=ApprovalRecordResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_approval(
+    approval_id: str,
+    user_id: str = Query(..., min_length=1, max_length=128),
+) -> ApprovalRecordResponse:
+    """Get approval details for a user.
+
+    Args:
+        approval_id: Approval identifier.
+        user_id: External user identifier.
+
+    Returns:
+        ApprovalRecordResponse: Approval record.
+    """
+    service = ApprovalService()
+    record = await service.get_approval(user_id, approval_id)
+    if record is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Approval not found")
+    return _map_approval_record(record)
+
+
+@v1_router.post(
+    "/approvals/{approval_id}",
+    response_model=ApprovalResolutionResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def resolve_approval(
+    approval_id: str,
+    payload: ApprovalDecisionRequest,
+    user_id: str = Query(..., min_length=1, max_length=128),
+    session: AsyncSession = Depends(get_session),
+) -> ApprovalResolutionResponse:
+    """Resolve an approval decision.
+
+    Args:
+        approval_id: Approval identifier.
+        payload: Approval decision payload.
+        user_id: External user identifier.
+        session: Database session dependency.
+
+    Returns:
+        ApprovalResolutionResponse: Resolution result.
+    """
+    decision = (payload.decision or "").strip().lower()
+    if decision not in {"approve", "reject", "edit"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid decision")
+
+    service = ApprovalService()
+    resolution = await service.resolve_approval(
+        user_id=user_id,
+        approval_id=approval_id,
+        decision=decision,
+        edited_args=payload.edited_args,
+    )
+    if resolution is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Approval not found")
+
+    record = await service.get_approval(user_id, approval_id)
+    if record and resolution.result_content:
+        message_service = MessageService(session)
+        await message_service.append_message(
+            UUID(record.thread_id),
+            "assistant",
+            resolution.result_content,
+        )
+
+    next_approval = None
+    if resolution.next_approval:
+        next_approval = _map_approval_record(resolution.next_approval)
+
+    return ApprovalResolutionResponse(
+        approval_id=resolution.approval_id,
+        status=resolution.status,
+        result_content=resolution.result_content,
+        next_approval=next_approval,
+    )
+
+
 def build_ws_payload(
     event: dict,
     thread_id: str,
@@ -200,11 +322,47 @@ def build_ws_payload(
         payload["delta"] = event["delta"]
     if "artifacts" in event:
         payload["artifacts"] = event["artifacts"]
+    if "approval_id" in event:
+        payload["approval_id"] = event["approval_id"]
+    if "interrupts" in event:
+        payload["interrupts"] = event["interrupts"]
+    if "status" in event:
+        payload["status"] = event["status"]
     if "code" in event:
         payload["code"] = event["code"]
     if "message" in event:
         payload["message"] = event["message"]
     return payload
+
+
+def _map_approval_record(record) -> ApprovalRecordResponse:
+    """Map approval record to response payload.
+
+    Args:
+        record: Approval record instance.
+
+    Returns:
+        ApprovalRecordResponse: Mapped response.
+    """
+    interrupts = [
+        {
+            "interrupt_id": interrupt.interrupt_id,
+            "action_requests": interrupt.action_requests,
+            "review_configs": interrupt.review_configs,
+        }
+        for interrupt in record.interrupts
+    ]
+    return ApprovalRecordResponse(
+        approval_id=record.approval_id,
+        thread_id=record.thread_id,
+        user_id=record.user_id,
+        status=record.status,
+        created_at=record.created_at,
+        resolved_at=record.resolved_at,
+        interrupts=interrupts,
+        decision=record.decision,
+        result_content=record.result_content,
+    )
 
 
 @v1_router.websocket("/ws/chat")
@@ -217,6 +375,8 @@ async def ws_chat(websocket: WebSocket) -> None:
     await websocket.accept()
     user_id = websocket.query_params.get("user_id")
     thread_id = websocket.query_params.get("thread_id")
+    streaming_flag = (websocket.query_params.get("streaming") or "1").lower()
+    enable_streaming = streaming_flag not in {"0", "false", "off"}
     if not user_id or not thread_id:
         await websocket.close(code=1008)
         return
@@ -267,6 +427,7 @@ async def ws_chat(websocket: WebSocket) -> None:
                     external_user_id=user_id,
                     thread_id=thread_uuid,
                     user_content=content,
+                    enable_streaming=enable_streaming,
                 ):
                     sequence += 1
                     await websocket.send_json(

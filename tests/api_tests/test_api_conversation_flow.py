@@ -28,7 +28,7 @@ except ImportError as exc:
     raise SystemExit("缺少依赖 websockets，请先安装：pip install websockets") from exc
 
 
-DEFAULT_BASE_URL = os.environ.get("NANO_GRAPHRAG_API_URL", "http://localhost:8000")
+DEFAULT_BASE_URL = os.environ.get("NANO_GRAPHRAG_API_URL", "http://localhost:8001")
 DEFAULT_USER_ID = os.environ.get("NANO_GRAPHRAG_USER_ID", "api-test-user")
 DEFAULT_TIMEOUT_SECONDS = 300.0
 DEFAULT_TITLE = "API 会话流程测试"
@@ -49,7 +49,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--base-url",
         default=DEFAULT_BASE_URL,
-        help="API 基础地址，例如 http://localhost:8000",
+        help="API 基础地址，例如 http://localhost:8001",
     )
     parser.add_argument(
         "--user-id",

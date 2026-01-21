@@ -15,7 +15,7 @@ except ImportError as exc:
     raise SystemExit("Missing dependency httpx. Install with: pip install httpx") from exc
 
 
-DEFAULT_BASE_URL = os.environ.get("NANO_GRAPHRAG_API_URL", "http://localhost:8000")
+DEFAULT_BASE_URL = os.environ.get("NANO_GRAPHRAG_API_URL", "http://localhost:8001")
 DEFAULT_USER_ID = os.environ.get("NANO_GRAPHRAG_USER_ID", "api-test-user")
 DEFAULT_TIMEOUT_SECONDS = 30.0
 

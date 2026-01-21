@@ -12,3 +12,10 @@ class CreateConversationRequest(BaseModel):
 
     user_id: str = Field(..., min_length=1, max_length=128)
     title: Optional[str] = Field(default=None, max_length=256)
+
+
+class ApprovalDecisionRequest(BaseModel):
+    """Request payload for approval decisions."""
+
+    decision: str = Field(..., examples=["approve", "reject", "edit"])
+    edited_args: Optional[dict] = Field(default=None, description="Edited tool args")

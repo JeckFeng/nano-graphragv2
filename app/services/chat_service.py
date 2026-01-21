@@ -40,6 +40,7 @@ class ChatService:
         thread_id: uuid.UUID,
         user_content: str,
         metadata: Optional[dict] = None,
+        enable_streaming: bool = True,
     ) -> AsyncIterator[dict]:
         """Stream chat responses for a user message.
 
@@ -48,6 +49,7 @@ class ChatService:
             thread_id: Thread identifier.
             user_content: User message content.
             metadata: Optional metadata attached to the message.
+            enable_streaming: Whether to enable streaming events.
 
         Yields:
             dict: Event payloads for the WebSocket layer.
@@ -69,7 +71,8 @@ class ChatService:
         async for event in self._agent_runner.astream(
             thread_id=str(thread_id),
             user_content=user_content,
-            enable_streaming=False,
+            user_id=external_user_id,
+            enable_streaming=enable_streaming,
         ):
             event_type = event.get("type")
             if event_type == "token":

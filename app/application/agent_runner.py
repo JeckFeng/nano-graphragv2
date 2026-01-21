@@ -6,9 +6,9 @@ from collections.abc import AsyncIterator
 from typing import Any, Optional
 
 from agents.top_supervisor import create_top_supervisor
+from app.services.approval_service import ApprovalService
 from config.settings import get_settings
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-from langgraph.types import Command
 
 
 class AgentRunner:
@@ -23,6 +23,7 @@ class AgentRunner:
         self,
         thread_id: str,
         user_content: str,
+        user_id: str,
         enable_streaming: bool = False,
     ) -> AsyncIterator[dict]:
         """Stream agent events for a user message.
@@ -30,6 +31,7 @@ class AgentRunner:
         Args:
             thread_id: Thread identifier.
             user_content: User message content.
+            user_id: External user identifier.
             enable_streaming: Whether to enable streaming events.
 
         Yields:
@@ -54,6 +56,7 @@ class TopSupervisorRunner(AgentRunner):
         self,
         thread_id: str,
         user_content: str,
+        user_id: str,
         enable_streaming: bool = False,
     ) -> AsyncIterator[dict]:
         """Stream agent output for a user message.
@@ -61,6 +64,7 @@ class TopSupervisorRunner(AgentRunner):
         Args:
             thread_id: Thread identifier.
             user_content: User message content.
+            user_id: External user identifier.
             enable_streaming: Whether to enable streaming events.
 
         Yields:
@@ -70,56 +74,53 @@ class TopSupervisorRunner(AgentRunner):
         async with AsyncPostgresSaver.from_conn_string(self._db_uri) as checkpointer:
             await checkpointer.setup()
             agent, _ = create_top_supervisor(checkpointer)
-
             if enable_streaming and hasattr(agent, "astream_events"):
+                buffered_tokens: list[str] = []
+                interrupts_list: Optional[list] = None
                 async for event in agent.astream_events(
                     {"messages": [{"role": "user", "content": user_content}]},
                     config=config,
                 ):
+                    interrupts_list = self._extract_interrupts(event)
+                    if interrupts_list:
+                        break
                     mapped = self._map_event(event)
                     if mapped:
+                        delta = mapped.get("delta", "")
+                        if isinstance(delta, str) and delta:
+                            buffered_tokens.append(delta)
                         yield mapped
-                return
+
+                if interrupts_list:
+                    approval_service = ApprovalService()
+                    approval = await approval_service.create_approval(
+                        user_id=user_id,
+                        thread_id=thread_id,
+                        interrupts_list=interrupts_list,
+                    )
+                    yield self._build_approval_event(approval)
+                    return
+
+                if buffered_tokens:
+                    yield {"type": "final", "content": "".join(buffered_tokens)}
+                    return
 
             result = await agent.ainvoke(
                 {"messages": [{"role": "user", "content": user_content}]},
                 config=config,
             )
-            result = await self._auto_approve_interrupts(result, config, agent)
-            yield {"type": "final", "content": result["messages"][-1].content}
+            if result.get("__interrupt__"):
+                approval_service = ApprovalService()
+                approval = await approval_service.create_approval(
+                    user_id=user_id,
+                    thread_id=thread_id,
+                    interrupts_list=result["__interrupt__"],
+                )
+                yield self._build_approval_event(approval)
+                return
 
-    async def _auto_approve_interrupts(self, result: dict, config: dict, agent: Any) -> dict:
-        """Automatically approve tool call interrupts.
-
-        Args:
-            result: Agent invocation result.
-            config: Agent configuration containing thread_id.
-            agent: Agent instance.
-
-        Returns:
-            dict: Final agent result after approvals.
-        """
-        while result.get("__interrupt__"):
-            resume_map = self._build_resume_map(result["__interrupt__"])
-            result = await agent.ainvoke(Command(resume=resume_map), config=config)
-        return result
-
-    def _build_resume_map(self, interrupts_list: list) -> dict:
-        """Build a resume map that approves all tool calls.
-
-        Args:
-            interrupts_list: List of interrupt objects from the agent.
-
-        Returns:
-            dict: Resume map for Command.
-        """
-        resume_map: dict = {}
-        for interrupt_obj in interrupts_list:
-            interrupts = interrupt_obj.value
-            action_requests = interrupts.get("action_requests", [])
-            decisions = [{"type": "approve"} for _ in action_requests]
-            resume_map[interrupt_obj.id] = {"decisions": decisions}
-        return resume_map
+            content = result["messages"][-1].content
+            yield {"type": "final", "content": content}
 
     def _map_event(self, event: Any) -> Optional[dict]:
         """Map a streaming event to a standard payload.
@@ -140,6 +141,51 @@ class TopSupervisorRunner(AgentRunner):
         content = self._extract_chunk_content(chunk)
         if content:
             return {"type": "token", "delta": content}
+        return None
+
+    @staticmethod
+    def _build_approval_event(approval: Any) -> dict:
+        """Build an approval-required event payload.
+
+        Args:
+            approval: Approval record instance.
+
+        Returns:
+            dict: Approval-required event payload.
+        """
+        interrupts_payload = [
+            {
+                "interrupt_id": interrupt.interrupt_id,
+                "action_requests": interrupt.action_requests,
+                "review_configs": interrupt.review_configs,
+            }
+            for interrupt in approval.interrupts
+        ]
+        return {
+            "type": "approval_required",
+            "approval_id": approval.approval_id,
+            "status": approval.status,
+            "interrupts": interrupts_payload,
+        }
+
+    @staticmethod
+    def _extract_interrupts(event: Any) -> Optional[list]:
+        """Extract interrupts from a streaming event if present.
+
+        Args:
+            event: Streaming event payload.
+
+        Returns:
+            Optional[list]: Interrupts list if found.
+        """
+        if not isinstance(event, dict):
+            return None
+        data = event.get("data") or {}
+        if "__interrupt__" in data:
+            return data.get("__interrupt__")
+        output = data.get("output")
+        if isinstance(output, dict) and "__interrupt__" in output:
+            return output.get("__interrupt__")
         return None
 
     @staticmethod

@@ -1058,7 +1058,7 @@ Team1 Agent 能够处理子代理的中断请求，核心机制包括：
    - 高德地图密钥（`AMAP_API_KEY`）
 2. 启动 FastAPI 服务：
    ```bash
-   uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+   uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
    ```
 
 ### 执行完整会话流程测试
