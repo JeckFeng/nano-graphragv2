@@ -29,7 +29,6 @@ from app.services.approval_service import ApprovalService
 from app.services.artifact_service import ArtifactService
 from app.services.chat_service import ChatService
 from app.services.conversation_service import ConversationService
-from app.services.message_service import MessageService
 from config.settings import get_settings
 
 router = APIRouter()
@@ -237,24 +236,54 @@ async def get_approval(
     return _map_approval_record(record)
 
 
+@v1_router.get(
+    "/approvals/{approval_id}/status",
+    status_code=status.HTTP_200_OK,
+)
+async def get_approval_status(
+    approval_id: str,
+    user_id: str = Query(..., min_length=1, max_length=128),
+) -> dict:
+    """Query approval execution status (for polling when WebSocket disconnects).
+
+    Args:
+        approval_id: Approval identifier.
+        user_id: External user identifier.
+
+    Returns:
+        dict: Approval status payload.
+    """
+    service = ApprovalService()
+    record = await service.get_approval(user_id, approval_id)
+    if record is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Approval not found")
+
+    return {
+        "approval_id": record.approval_id,
+        "status": record.status,
+        "result_content": record.result_content,
+    }
+
+
 @v1_router.post(
     "/approvals/{approval_id}",
     response_model=ApprovalResolutionResponse,
-    status_code=status.HTTP_200_OK,
+    status_code=status.HTTP_202_ACCEPTED,
 )
 async def resolve_approval(
     approval_id: str,
     payload: ApprovalDecisionRequest,
     user_id: str = Query(..., min_length=1, max_length=128),
-    session: AsyncSession = Depends(get_session),
 ) -> ApprovalResolutionResponse:
-    """Resolve an approval decision.
+    """Submit approval decision.
+
+    Returns status="processing" to indicate execution has started.
+    Results will be pushed via WebSocket.
 
     Args:
         approval_id: Approval identifier.
         payload: Approval decision payload.
         user_id: External user identifier.
-        session: Database session dependency.
 
     Returns:
         ApprovalResolutionResponse: Resolution result.
@@ -273,24 +302,13 @@ async def resolve_approval(
     if resolution is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Approval not found")
 
-    record = await service.get_approval(user_id, approval_id)
-    if record and resolution.result_content:
-        message_service = MessageService(session)
-        await message_service.append_message(
-            UUID(record.thread_id),
-            "assistant",
-            resolution.result_content,
-        )
-
-    next_approval = None
-    if resolution.next_approval:
-        next_approval = _map_approval_record(resolution.next_approval)
+    # 注意：不再在这里保存消息，由后台任务完成后保存
 
     return ApprovalResolutionResponse(
         approval_id=resolution.approval_id,
         status=resolution.status,
         result_content=resolution.result_content,
-        next_approval=next_approval,
+        next_approval=None,
     )
 
 
@@ -389,80 +407,89 @@ async def ws_chat(websocket: WebSocket) -> None:
     settings = get_settings()
     runner = TopSupervisorRunner(settings.langgraph_memory_database_url)
 
-    async for session in get_session():
-        service = ChatService(session, runner)
-        try:
-            while True:
-                payload = await websocket.receive_json()
-                if payload.get("type") != "user_message":
-                    await websocket.send_json(
-                        build_ws_payload(
-                            {
-                                "type": "error",
-                                "code": "INVALID_MESSAGE",
-                                "message": "Unsupported message type",
-                            },
-                            thread_id,
-                            sequence=0,
-                        )
-                    )
-                    continue
-                content = payload.get("content", "")
-                if not isinstance(content, str) or not content.strip():
-                    await websocket.send_json(
-                        build_ws_payload(
-                            {
-                                "type": "error",
-                                "code": "EMPTY_CONTENT",
-                                "message": "Message content is empty",
-                            },
-                            thread_id,
-                            sequence=0,
-                        )
-                    )
-                    continue
+    # 注册 WebSocket 连接
+    from app.services.ws_manager import ws_manager
 
-                sequence = 0
-                async for event in service.stream_chat(
-                    external_user_id=user_id,
-                    thread_id=thread_uuid,
-                    user_content=content,
-                    enable_streaming=enable_streaming,
-                ):
-                    sequence += 1
-                    await websocket.send_json(
-                        build_ws_payload(event, thread_id, sequence=sequence)
+    await ws_manager.register(thread_id, websocket)
+
+    try:
+        async for session in get_session():
+            service = ChatService(session, runner)
+            try:
+                while True:
+                    payload = await websocket.receive_json()
+                    if payload.get("type") != "user_message":
+                        await websocket.send_json(
+                            build_ws_payload(
+                                {
+                                    "type": "error",
+                                    "code": "INVALID_MESSAGE",
+                                    "message": "Unsupported message type",
+                                },
+                                thread_id,
+                                sequence=0,
+                            )
+                        )
+                        continue
+                    content = payload.get("content", "")
+                    if not isinstance(content, str) or not content.strip():
+                        await websocket.send_json(
+                            build_ws_payload(
+                                {
+                                    "type": "error",
+                                    "code": "EMPTY_CONTENT",
+                                    "message": "Message content is empty",
+                                },
+                                thread_id,
+                                sequence=0,
+                            )
+                        )
+                        continue
+
+                    sequence = 0
+                    async for event in service.stream_chat(
+                        external_user_id=user_id,
+                        thread_id=thread_uuid,
+                        user_content=content,
+                        enable_streaming=enable_streaming,
+                    ):
+                        sequence += 1
+                        await websocket.send_json(
+                            build_ws_payload(event, thread_id, sequence=sequence)
+                        )
+            except WebSocketDisconnect:
+                return
+            except PermissionError:
+                await websocket.send_json(
+                    build_ws_payload(
+                        {
+                            "type": "error",
+                            "code": "NOT_AUTHORIZED",
+                            "message": "Thread not found",
+                        },
+                        thread_id,
+                        sequence=0,
                     )
-        except WebSocketDisconnect:
-            return
-        except PermissionError:
-            await websocket.send_json(
-                build_ws_payload(
-                    {
-                        "type": "error",
-                        "code": "NOT_AUTHORIZED",
-                        "message": "Thread not found",
-                    },
-                    thread_id,
-                    sequence=0,
                 )
-            )
-            await websocket.close(code=1008)
-            return
-        except Exception:
-            await websocket.send_json(
-                build_ws_payload(
-                    {
-                        "type": "error",
-                        "code": "SERVER_ERROR",
-                        "message": "Unexpected server error",
-                    },
-                    thread_id,
-                    sequence=0,
+                await websocket.close(code=1008)
+                return
+            except Exception:
+                await websocket.send_json(
+                    build_ws_payload(
+                        {
+                            "type": "error",
+                            "code": "SERVER_ERROR",
+                            "message": "Unexpected server error",
+                        },
+                        thread_id,
+                        sequence=0,
+                    )
                 )
-            )
-            await websocket.close(code=1011)
-            return
+                await websocket.close(code=1011)
+                return
+    finally:
+        # 确保断开时注销连接
+        await ws_manager.unregister(thread_id)
 
 
 router.include_router(v1_router)

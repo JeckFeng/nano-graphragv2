@@ -60,6 +60,16 @@ const handleDecision = async (decision: string) => {
   try {
     const args = decision === 'edit' ? editedArgs.value : undefined
     const result = await approvalStore.resolve(userStore.userId, props.approval.approval_id, decision, args)
+    
+    // 异步模式：提交成功后关闭面板，等待 WS 推送
+    if (result.isAsync || result.status === 'processing') {
+      message.info('已提交，正在处理中...')
+      isEditing.value = false
+      emit('resolved')
+      return
+    }
+    
+    // 同步完成（兼容旧逻辑）
     if (result.result_content && props.approval.thread_id === conversationStore.currentThreadId) {
       messageStore.addMessage({
         id: Date.now(),

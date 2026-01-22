@@ -28,7 +28,7 @@ export interface ApprovalInterrupt {
 export interface ApprovalInfo {
   approval_id: string
   thread_id: string
-  status: 'pending' | 'approved' | 'rejected'
+  status: 'pending' | 'approved' | 'rejected' | 'processing'
   tool_name: string
   tool_args: Record<string, unknown>
   interrupts: ApprovalInterrupt[]
@@ -38,7 +38,7 @@ export interface ApprovalRecord {
   approval_id: string
   thread_id: string
   user_id: string
-  status: 'pending' | 'approved' | 'rejected' | 'edited'
+  status: 'pending' | 'approved' | 'rejected' | 'edited' | 'processing'
   created_at: string
   resolved_at: string | null
   interrupts: ApprovalInterrupt[]
@@ -48,9 +48,10 @@ export interface ApprovalRecord {
 
 export interface ApprovalResolutionResponse {
   approval_id: string
-  status: string
+  status: 'pending' | 'approved' | 'rejected' | 'edited' | 'processing'
   result_content: string | null
   next_approval: ApprovalRecord | null
+  isAsync?: boolean
 }
 
 export type WsEventType = 'token' | 'final' | 'error' | 'approval_required'

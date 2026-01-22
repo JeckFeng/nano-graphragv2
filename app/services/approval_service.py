@@ -255,7 +255,7 @@ class ApprovalService:
         decision: str,
         edited_args: Optional[Dict[str, Any]] = None,
     ) -> Optional[ApprovalResolution]:
-        """Resolve an approval by resuming the agent execution.
+        """Submit approval decision and start async execution.
 
         Args:
             user_id: External user identifier.
@@ -264,7 +264,7 @@ class ApprovalService:
             edited_args: Optional edited tool args for edit decision.
 
         Returns:
-            Optional[ApprovalResolution]: Resolution result if approval found.
+            Optional[ApprovalResolution]: status="processing" indicates execution started.
         """
         record = await self.get_approval(user_id, approval_id)
         if record is None:
@@ -286,57 +286,174 @@ class ApprovalService:
                 next_approval=None,
             )
 
+        # 构建 resume_map
+        resume_map = self._build_resume_map(record, decision, edited_args)
+
+        # 更新状态为处理中
+        record.decision = decision
+        record.status = "processing"
+        await _STORE.update(record)
+
+        # 启动后台任务（不等待）
+        asyncio.create_task(self._execute_resume(record, resume_map, user_id))
+
+        return ApprovalResolution(
+            approval_id=record.approval_id,
+            status="processing",
+            result_content=None,
+            next_approval=None,
+        )
+
+    async def _execute_resume(
+        self,
+        record: ApprovalRecord,
+        resume_map: Dict[str, Any],
+        user_id: str,
+    ) -> None:
+        """Execute agent resume in background, push results via WebSocket.
+
+        Args:
+            record: Approval record being resolved.
+            resume_map: Resume map payload for Command.
+            user_id: External user identifier.
+        """
+        from app.application.agent_runner import TopSupervisorRunner
+        from app.services.ws_manager import ws_manager
+
+        thread_id = record.thread_id
+        runner = TopSupervisorRunner(self._db_uri)
+
         try:
-            resume_map = self._build_resume_map(record, decision, edited_args)
-            result = await self._resume_agent(record.thread_id, resume_map)
-            record.decision = decision
-            record.resolved_at = datetime.now(timezone.utc)
+            config = {"configurable": {"thread_id": thread_id}}
+            async with AsyncPostgresSaver.from_conn_string(self._db_uri) as checkpointer:
+                await checkpointer.setup()
+                agent, _ = create_top_supervisor(checkpointer)
 
-            if result.get("__interrupt__"):
-                record.status = self._map_decision_status(decision)
+                buffered_tokens: list[str] = []
+                sequence = 0
+
+                async for event in agent.astream_events(
+                    Command(resume=resume_map),
+                    config=config,
+                ):
+                    # 复用现有的中断检测逻辑（支持 GraphInterrupt/on_tool_error）
+                    interrupts = TopSupervisorRunner._extract_interrupts(event)
+                    if interrupts:
+                        await self._handle_new_interrupt(
+                            record, interrupts, user_id, sequence
+                        )
+                        return
+
+                    # 复用现有的事件映射逻辑（过滤 tools: 命名空间）
+                    mapped = runner._map_event(event)
+                    if mapped:
+                        sequence += 1
+                        mapped["sequence"] = sequence
+                        mapped["thread_id"] = thread_id
+
+                        delta = mapped.get("delta", "")
+                        if delta:
+                            buffered_tokens.append(delta)
+
+                        await ws_manager.send_to_thread(thread_id, mapped)
+
+                # 执行完成
+                content = "".join(buffered_tokens)
+                record.status = self._map_decision_status(record.decision or "approve")
+                record.result_content = content
+                record.resolved_at = datetime.now(timezone.utc)
                 await _STORE.update(record)
-                next_record = await self.create_approval(
-                    user_id,
-                    record.thread_id,
-                    result["__interrupt__"],
-                )
-                return ApprovalResolution(
-                    approval_id=record.approval_id,
-                    status=record.status,
-                    result_content=None,
-                    next_approval=next_record,
-                )
 
-            content = ""
-            if result.get("messages"):
-                content = result["messages"][-1].content
-            record.status = self._map_decision_status(decision)
-            record.result_content = content
-            await _STORE.update(record)
-            return ApprovalResolution(
-                approval_id=record.approval_id,
-                status=record.status,
-                result_content=content,
-                next_approval=None,
-            )
+                # 保存消息到数据库
+                await self._save_message_to_db(thread_id, content)
+
+                sequence += 1
+                await ws_manager.send_to_thread(thread_id, {
+                    "type": "final",
+                    "thread_id": thread_id,
+                    "content": content,
+                    "sequence": sequence,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                })
+
+        except Exception as e:
+            await ws_manager.send_to_thread(thread_id, {
+                "type": "error",
+                "thread_id": thread_id,
+                "code": "RESUME_ERROR",
+                "message": str(e),
+            })
         finally:
-            await _STORE.finish_resolve(approval_id)
+            await _STORE.finish_resolve(record.approval_id)
 
-    async def _resume_agent(self, thread_id: str, resume_map: Dict[str, Any]) -> dict:
-        """Resume the agent execution using LangGraph Command.
+    async def _handle_new_interrupt(
+        self,
+        record: ApprovalRecord,
+        interrupts: list,
+        user_id: str,
+        sequence: int,
+    ) -> None:
+        """Handle new interrupt generated during resume execution.
+
+        Args:
+            record: Current approval record.
+            interrupts: New interrupt objects.
+            user_id: External user identifier.
+            sequence: Current event sequence number.
+        """
+        from app.services.ws_manager import ws_manager
+
+        # 更新当前记录状态
+        record.status = self._map_decision_status(record.decision or "approve")
+        record.resolved_at = datetime.now(timezone.utc)
+        await _STORE.update(record)
+
+        # 创建新的审批记录
+        new_approval = await self.create_approval(
+            user_id=user_id,
+            thread_id=record.thread_id,
+            interrupts_list=interrupts,
+        )
+
+        # 推送 approval_required 事件
+        await ws_manager.send_to_thread(record.thread_id, {
+            "type": "approval_required",
+            "thread_id": record.thread_id,
+            "approval_id": new_approval.approval_id,
+            "status": new_approval.status,
+            "sequence": sequence + 1,
+            "interrupts": [
+                {
+                    "interrupt_id": i.interrupt_id,
+                    "action_requests": i.action_requests,
+                    "review_configs": i.review_configs,
+                }
+                for i in new_approval.interrupts
+            ],
+        })
+
+    async def _save_message_to_db(self, thread_id: str, content: str) -> None:
+        """Save assistant message to database.
 
         Args:
             thread_id: Thread identifier.
-            resume_map: Resume map payload for Command.
-
-        Returns:
-            dict: Agent execution result.
+            content: Message content.
         """
-        config = {"configurable": {"thread_id": thread_id}}
-        async with AsyncPostgresSaver.from_conn_string(self._db_uri) as checkpointer:
-            await checkpointer.setup()
-            agent, _ = create_top_supervisor(checkpointer)
-            return await agent.ainvoke(Command(resume=resume_map), config=config)
+        if not content:
+            return
+
+        from uuid import UUID
+
+        from app.infra.db import ASYNC_SESSION_FACTORY
+        from app.services.message_service import MessageService
+
+        async with ASYNC_SESSION_FACTORY() as session:
+            message_service = MessageService(session)
+            await message_service.append_message(
+                UUID(thread_id),
+                "assistant",
+                content,
+            )
 
     @staticmethod
     def _build_resume_map(
