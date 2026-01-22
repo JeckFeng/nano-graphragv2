@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+import ast
+import re
 from typing import Any, Optional
 
 from agents.top_supervisor import create_top_supervisor
@@ -84,6 +86,15 @@ class TopSupervisorRunner(AgentRunner):
                     interrupts_list = self._extract_interrupts(event)
                     if interrupts_list:
                         break
+                    if isinstance(event, dict) and event.get("event") == "on_tool_error":
+                        error_detail = (event.get("data") or {}).get("error")
+                        error_message = str(error_detail) if error_detail is not None else "Tool execution failed"
+                        yield {
+                            "type": "error",
+                            "code": "TOOL_ERROR",
+                            "message": error_message,
+                        }
+                        return
                     mapped = self._map_event(event)
                     if mapped:
                         delta = mapped.get("delta", "")
@@ -136,6 +147,10 @@ class TopSupervisorRunner(AgentRunner):
         event_type = event.get("event")
         if event_type is None:
             return None
+        metadata = event.get("metadata") or {}
+        checkpoint_ns = metadata.get("langgraph_checkpoint_ns") or ""
+        if "tools:" in checkpoint_ns:
+            return None
         data = event.get("data") or {}
         chunk = data.get("chunk") or data.get("delta") or data.get("text")
         content = self._extract_chunk_content(chunk)
@@ -186,6 +201,107 @@ class TopSupervisorRunner(AgentRunner):
         output = data.get("output")
         if isinstance(output, dict) and "__interrupt__" in output:
             return output.get("__interrupt__")
+        if event.get("event") == "on_tool_error":
+            error_detail = data.get("error")
+            if error_detail is None:
+                return None
+            if hasattr(error_detail, "id") and hasattr(error_detail, "value"):
+                interrupt_id = str(getattr(error_detail, "id"))
+                value = getattr(error_detail, "value")
+                if isinstance(value, dict):
+                    return [ParsedInterrupt(interrupt_id=interrupt_id, value=value)]
+            return TopSupervisorRunner._parse_interrupts_from_error(str(error_detail))
+        return None
+
+    @staticmethod
+    def _parse_interrupts_from_error(error_detail: str) -> Optional[list]:
+        """Parse interrupts from a tool error string payload.
+
+        Args:
+            error_detail: Error string potentially containing Interrupt(value=...).
+
+        Returns:
+            Optional[list]: List of parsed interrupts if present.
+        """
+        marker = "Interrupt(value="
+        start_idx = error_detail.find(marker)
+        if start_idx == -1:
+            return None
+
+        brace_start = error_detail.find("{", start_idx + len(marker))
+        if brace_start == -1:
+            return None
+
+        payload = TopSupervisorRunner._extract_braced_payload(error_detail, brace_start)
+        if not payload:
+            return None
+
+        try:
+            value = ast.literal_eval(payload)
+        except (SyntaxError, ValueError):
+            return None
+
+        if not isinstance(value, dict):
+            return None
+
+        tail = error_detail[brace_start + len(payload) :]
+        patterns = [
+            r"id=UUID\\('([^']+)'\\)",
+            r"id=UUID\\(\"([^\"]+)\"\\)",
+            r"id='([^']+)'",
+            r'id=\"([^\"]+)\"',
+        ]
+        interrupt_id = None
+        for pattern in patterns:
+            match = re.search(pattern, tail)
+            if match:
+                interrupt_id = match.group(1)
+                break
+        if not interrupt_id:
+            interrupt_id = "unknown"
+        return [ParsedInterrupt(interrupt_id=interrupt_id, value=value)]
+
+    @staticmethod
+    def _extract_braced_payload(text: str, start: int) -> Optional[str]:
+        """Extract a brace-balanced payload starting at index.
+
+        Args:
+            text: Input text containing a dict literal.
+            start: Start index where '{' is located.
+
+        Returns:
+            Optional[str]: Extracted payload or None.
+        """
+        if start < 0 or start >= len(text) or text[start] != "{":
+            return None
+
+        depth = 0
+        in_string = False
+        quote_char = ""
+        escape = False
+        for idx in range(start, len(text)):
+            char = text[idx]
+            if in_string:
+                if escape:
+                    escape = False
+                    continue
+                if char == "\\":
+                    escape = True
+                    continue
+                if char == quote_char:
+                    in_string = False
+                    quote_char = ""
+                continue
+            if char in ("'", '"'):
+                in_string = True
+                quote_char = char
+                continue
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[start : idx + 1]
         return None
 
     @staticmethod
@@ -207,3 +323,17 @@ class TopSupervisorRunner(AgentRunner):
         if hasattr(chunk, "content"):
             return getattr(chunk, "content")
         return None
+
+
+class ParsedInterrupt:
+    """Minimal interrupt wrapper extracted from tool error payloads."""
+
+    def __init__(self, interrupt_id: str, value: dict) -> None:
+        """Initialize the parsed interrupt wrapper.
+
+        Args:
+            interrupt_id: Interrupt identifier.
+            value: Interrupt payload value.
+        """
+        self.id = interrupt_id
+        self.value = value

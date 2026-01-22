@@ -2,7 +2,7 @@
 import { ref } from 'vue'
 import { NInput, NButton } from 'naive-ui'
 
-defineProps<{
+const props = defineProps<{
   disabled: boolean
 }>()
 
@@ -11,22 +11,18 @@ const emit = defineEmits<{
 }>()
 
 const inputValue = ref('')
-const sending = ref(false)
 
 const handleSend = () => {
-  if (sending.value) return
+  if (props.disabled) return
   const content = inputValue.value.trim()
   if (content) {
-    sending.value = true
     emit('send', content)
     inputValue.value = ''
-    // 防抖：500ms 后允许再次发送
-    setTimeout(() => { sending.value = false }, 500)
   }
 }
 
 const handleKeydown = (e: KeyboardEvent) => {
-  if (e.key === 'Enter' && !e.shiftKey) {
+  if (e.key === 'Enter' && !e.shiftKey && !props.disabled) {
     e.preventDefault()
     handleSend()
   }
@@ -39,18 +35,17 @@ const handleKeydown = (e: KeyboardEvent) => {
       <NInput
         v-model:value="inputValue"
         type="textarea"
-        placeholder="输入消息，按 Enter 发送..."
+        :placeholder="disabled ? '请等待响应...' : '输入消息，按 Enter 发送...'"
         :autosize="{ minRows: 1, maxRows: 4 }"
         :disabled="disabled"
         @keydown="handleKeydown"
       />
       <NButton
         type="primary"
-        :disabled="disabled || !inputValue.trim() || sending"
-        :loading="sending"
+        :disabled="disabled || !inputValue.trim()"
         @click="handleSend"
       >
-        发送
+        {{ disabled ? '处理中' : '发送' }}
       </NButton>
     </div>
   </div>

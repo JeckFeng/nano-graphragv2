@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 import logging
 import os
 import re
@@ -230,17 +230,22 @@ async def gaode_driving_route(
 ) -> Dict[str, Any]:
     """高德驾车路线规划工具。
 
+    返回结构分为两部分：
+    - 摘要和步骤信息：供 LLM 推理使用（不含 polyline）
+    - __artifact__：供前端使用的完整数据（含 polyline）
+
     Args:
-        origin: 起点经纬度，格式为“经度,纬度”，超出 6 位小数会自动四舍五入。
-        destination: 终点经纬度，格式为“经度,纬度”，超出 6 位小数会自动四舍五入。
+        origin: 起点经纬度，格式为"经度,纬度"，超出 6 位小数会自动四舍五入。
+        destination: 终点经纬度，格式为"经度,纬度"，超出 6 位小数会自动四舍五入。
         api_key: 高德地图 API Key，可选，默认读取环境变量。
 
     Returns:
-        路线规划结果，包含摘要与完整路线数据。
+        路线规划结果，包含摘要、步骤和 artifact。
 
     Raises:
         ToolError: 当参数不合法、API 调用失败或网络异常时抛出。
     """
+
     key = _load_api_key(api_key)
     route_data = await _fetch_driving_route(origin, destination, key)
 
@@ -248,12 +253,36 @@ async def gaode_driving_route(
     distance = _safe_int(path.get("distance", 0))
     duration = _safe_int(path.get("duration", 0))
 
+    # 提取 polyline 数据（供前端绘制，不进入 LLM 上下文）
+    polylines: List[str] = []
+    # 构建不含 polyline 的步骤摘要（供 LLM 推理）
+    steps_summary: List[Dict[str, Any]] = []
+
+    for step in path.get("steps", []):
+        if step.get("polyline"):
+            polylines.append(step["polyline"])
+        steps_summary.append({
+            "instruction": step.get("instruction", ""),
+            "road_name": step.get("road_name", ""),
+            "distance": _safe_int(step.get("distance", 0)),
+            "duration": _safe_int(step.get("duration", 0)),
+        })
+
     return {
         "summary": {
             "distance_meters": distance,
             "duration_seconds": duration,
+            "distance_km": round(distance / 1000, 2),
+            "duration_minutes": round(duration / 60, 1),
+            "steps_count": len(steps_summary),
         },
-        "route": route_data,
+        "steps": steps_summary,
+        "__artifact__": {
+            "type": "route_polyline",
+            "polylines": polylines,
+            "origin": origin,
+            "destination": destination,
+        },
     }
 
 

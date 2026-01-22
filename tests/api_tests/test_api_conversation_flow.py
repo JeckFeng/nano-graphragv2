@@ -2,7 +2,7 @@
 
 该脚本通过 REST + WebSocket 完成一次完整会话流程：
 1) 创建会话
-2) map_worker 路线规划
+2) map_worker 触发人工审核，拉取审批列表并自动批准
 3) sql_worker 表结构查询
 4) rag_worker 知识检索
 5) 关闭会话（断开 WebSocket）
@@ -33,6 +33,7 @@ DEFAULT_USER_ID = os.environ.get("NANO_GRAPHRAG_USER_ID", "api-test-user")
 DEFAULT_TIMEOUT_SECONDS = 300.0
 DEFAULT_TITLE = "API 会话流程测试"
 
+MAP_QUESTION = "请你帮我规划从(116.3907203448,39.916580438797)到(116.0107203448,38.110580438797)的驾车行驶路线。"
 QUESTION_FLOW = [
     ("sql_worker", "查询数据库中有哪些表格"),
     ("rag_worker", "土壤含水量状态信息采用什么方法获得？"),
@@ -127,6 +128,106 @@ async def create_conversation(
     return response.json()
 
 
+async def list_approvals(
+    client: httpx.AsyncClient,
+    base_url: str,
+    user_id: str,
+    status: str = "pending",
+    thread_id: str | None = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """拉取审批列表。
+
+    Args:
+        client: httpx 异步客户端。
+        base_url: API 基础地址。
+        user_id: 外部用户标识。
+        status: 审批状态过滤。
+        thread_id: 会话线程 ID 过滤。
+        limit: 分页大小。
+        offset: 分页偏移量。
+
+    Returns:
+        dict[str, Any]: 审批列表响应。
+
+    Raises:
+        RuntimeError: 当 API 返回错误状态码。
+    """
+    params = {"user_id": user_id, "status": status, "limit": limit, "offset": offset}
+    if thread_id:
+        params["thread_id"] = thread_id
+    response = await client.get(urljoin(base_url.rstrip("/") + "/", "v1/approvals"), params=params)
+    if response.status_code != 200:
+        raise RuntimeError(
+            f"查询审批列表失败: status={response.status_code}, body={response.text}"
+        )
+    return response.json()
+
+
+async def resolve_approval(
+    client: httpx.AsyncClient,
+    base_url: str,
+    user_id: str,
+    approval_id: str,
+    decision: str,
+) -> dict[str, Any]:
+    """提交审批决策。
+
+    Args:
+        client: httpx 异步客户端。
+        base_url: API 基础地址。
+        user_id: 外部用户标识。
+        approval_id: 审批记录 ID。
+        decision: 决策类型（approve/reject/edit）。
+
+    Returns:
+        dict[str, Any]: 审批决策响应。
+
+    Raises:
+        RuntimeError: 当 API 返回错误状态码。
+    """
+    response = await client.post(
+        urljoin(base_url.rstrip("/") + "/", f"v1/approvals/{approval_id}"),
+        params={"user_id": user_id},
+        json={"decision": decision},
+    )
+    if response.status_code != 200:
+        raise RuntimeError(
+            f"提交审批失败: status={response.status_code}, body={response.text}"
+        )
+    return response.json()
+
+
+def select_approval_id(
+    approval_event: dict[str, Any],
+    approvals: list[dict[str, Any]],
+    thread_id: str,
+) -> str:
+    """选择审批记录 ID。
+
+    Args:
+        approval_event: WebSocket 审批事件。
+        approvals: 审批列表。
+        thread_id: 会话线程 ID。
+
+    Returns:
+        str: 匹配的审批记录 ID。
+
+    Raises:
+        RuntimeError: 未找到可用审批记录。
+    """
+    approval_id = approval_event.get("approval_id")
+    if approval_id:
+        for record in approvals:
+            if record.get("approval_id") == approval_id:
+                return approval_id
+    for record in approvals:
+        if record.get("thread_id") == thread_id:
+            return str(record.get("approval_id"))
+    raise RuntimeError("未找到可用的审批记录 ID")
+
+
 async def receive_event(websocket: Any, timeout: float) -> dict[str, Any]:
     """等待 WebSocket 返回事件。
 
@@ -149,6 +250,7 @@ async def send_user_message(
     websocket: Any,
     content: str,
     timeout: float,
+    terminal_types: set[str] | None = None,
 ) -> dict[str, Any]:
     """通过 WebSocket 发送用户消息并等待最终响应。
 
@@ -158,21 +260,22 @@ async def send_user_message(
         timeout: 超时时间（秒）。
 
     Returns:
-        dict[str, Any]: 最终响应事件。
+        dict[str, Any]: 终止事件。
 
     Raises:
         RuntimeError: 当收到错误事件。
     """
     await websocket.send(json.dumps({"type": "user_message", "content": content}))
+    expected_types = terminal_types or {"final"}
     while True:
         event = await receive_event(websocket, timeout=timeout)
         event_type = event.get("type")
-        if event_type == "final":
-            return event
         if event_type == "error":
             raise RuntimeError(
                 f"WebSocket 返回错误: code={event.get('code')}, message={event.get('message')}"
             )
+        if event_type in expected_types:
+            return event
 
 
 async def run_flow(
@@ -191,27 +294,56 @@ async def run_flow(
     """
     async with httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as client:
         conversation = await create_conversation(client, base_url, user_id, title)
-    thread_id = conversation.get("thread_id")
-    if not thread_id:
-        raise RuntimeError("创建会话返回数据缺少 thread_id")
+        thread_id = conversation.get("thread_id")
+        if not thread_id:
+            raise RuntimeError("创建会话返回数据缺少 thread_id")
 
-    print("创建会话成功:", thread_id)
-    ws_url = build_ws_url(
-        base_url,
-        "/v1/ws/chat",
-        {"user_id": user_id, "thread_id": thread_id},
-    )
+        print("创建会话成功:", thread_id)
+        ws_url = build_ws_url(
+            base_url,
+            "/v1/ws/chat",
+            {"user_id": user_id, "thread_id": thread_id, "streaming": "1"},
+        )
 
-    async with websockets.connect(
-        ws_url,
-        ping_interval=timeout,
-        ping_timeout=timeout,
-        open_timeout=timeout,
-    ) as websocket:
-        for step_name, question in QUESTION_FLOW:
-            print(f"\n[{step_name}] 用户问题: {question}")
-            event = await send_user_message(websocket, question, timeout)
-            print(f"[{step_name}] 助手回复: {event.get('content', '')}")
+        async with websockets.connect(
+            ws_url,
+            ping_interval=timeout,
+            ping_timeout=timeout,
+            open_timeout=timeout,
+        ) as websocket:
+            print(f"\n[map_worker] 用户问题: {MAP_QUESTION}")
+            event = await send_user_message(
+                websocket,
+                MAP_QUESTION,
+                timeout,
+                terminal_types={"final", "approval_required"},
+            )
+            if event.get("type") == "approval_required":
+                approvals_payload = await list_approvals(
+                    client,
+                    base_url,
+                    user_id,
+                    status="pending",
+                    thread_id=thread_id,
+                )
+                approvals = approvals_payload.get("approvals") or []
+                approval_id = select_approval_id(event, approvals, thread_id)
+                print(f"[map_worker] 触发审批: approval_id={approval_id}")
+                resolution = await resolve_approval(
+                    client,
+                    base_url,
+                    user_id,
+                    approval_id,
+                    decision="approve",
+                )
+                print(f"[map_worker] 审批完成: status={resolution.get('status')}")
+            else:
+                print(f"[map_worker] 助手回复: {event.get('content', '')}")
+
+            for step_name, question in QUESTION_FLOW:
+                print(f"\n[{step_name}] 用户问题: {question}")
+                event = await send_user_message(websocket, question, timeout)
+                print(f"[{step_name}] 助手回复: {event.get('content', '')}")
 
     print("\n会话流程结束，WebSocket 已关闭。")
 

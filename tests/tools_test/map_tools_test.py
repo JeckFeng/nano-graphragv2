@@ -2,6 +2,7 @@
 
 Purpose:
 - Verify that the Gaode driving route tool works with a real API call.
+- Persist the raw API response to tests/tools_test/test_map_tools_result.json.
 
 Constraints:
 - No LLM usage.
@@ -37,6 +38,7 @@ except ModuleNotFoundError as exc:
 
 DEFAULT_ORIGIN = "116.3907203448,39.916580438797"
 DEFAULT_DESTINATION = "116.0107203448,38.110580438797"
+RESULT_PATH = PROJECT_ROOT / "tests" / "tools_test" / "test_map_tools_result.json"
 
 
 def parse_args() -> argparse.Namespace:
@@ -128,7 +130,12 @@ def main() -> int:
         print(f"Unexpected error: {exc}")
         return 1
 
+    RESULT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with RESULT_PATH.open("w", encoding="utf-8") as file:
+        json.dump(route_data, file, ensure_ascii=False, indent=2)
+
     print(json.dumps(route_data, ensure_ascii=False, indent=2))
+    print(f"Raw Gaode API response saved to: {RESULT_PATH}")
     return 0
 
 

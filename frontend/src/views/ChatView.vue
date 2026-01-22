@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { watch, onMounted } from 'vue'
-import { NEmpty } from 'naive-ui'
+import { NEmpty, useMessage } from 'naive-ui'
 import { useConversationStore, useMessageStore, useUserStore, useApprovalStore } from '@/stores'
 import ChatPanel from '@/components/chat/ChatPanel.vue'
 
@@ -8,29 +8,50 @@ const conversationStore = useConversationStore()
 const messageStore = useMessageStore()
 const userStore = useUserStore()
 const approvalStore = useApprovalStore()
+const message = useMessage()
+
+// 检查当前会话是否有待处理的审批
+const checkPendingApprovals = async () => {
+  if (!conversationStore.currentThreadId) return
+  
+  try {
+    await approvalStore.fetchList(userStore.userId)
+    const pendingForThread = approvalStore.list.find(
+      a => a.thread_id === conversationStore.currentThreadId && a.status === 'pending'
+    )
+    if (pendingForThread) {
+      message.warning('检测到未完成的审批，请先处理')
+      approvalStore.select(pendingForThread.approval_id)
+      approvalStore.showPanel()
+    }
+  } catch {
+    // 静默失败
+  }
+}
 
 const handleApprovalRequired = async (approvalId: string) => {
-  // 刷新审批列表并打开抽屉
   await approvalStore.fetchList(userStore.userId)
   approvalStore.select(approvalId)
   approvalStore.showPanel()
 }
 
-// 切换会话时加载消息
+// 切换会话时加载消息并检查审批
 watch(
   () => conversationStore.currentThreadId,
   async (threadId) => {
     if (threadId) {
       await messageStore.loadMessages(threadId, userStore.userId)
+      await checkPendingApprovals()
     } else {
       messageStore.clearMessages()
     }
   }
 )
 
-onMounted(() => {
+onMounted(async () => {
   if (conversationStore.currentThreadId) {
-    messageStore.loadMessages(conversationStore.currentThreadId, userStore.userId)
+    await messageStore.loadMessages(conversationStore.currentThreadId, userStore.userId)
+    await checkPendingApprovals()
   }
 })
 </script>

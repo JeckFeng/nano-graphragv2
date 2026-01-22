@@ -1,4 +1,4 @@
-import { ref, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { createWebSocket, sendMessage } from '@/api/websocket'
 import type { WsEvent } from '@/types'
 
@@ -10,12 +10,20 @@ export function useWebSocket() {
   const connected = ref(false)
   const streamingContent = ref('')
   const isStreaming = ref(false)
+  const waitingResponse = ref(false)
   
   let reconnectAttempts = 0
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
   let currentUserId = ''
   let currentThreadId = ''
   let currentOnEvent: ((event: WsEvent) => void) | null = null
+
+  // 页面卸载前清理连接
+  const handleBeforeUnload = () => {
+    if (ws.value) {
+      ws.value.close(1000, 'Page unload')
+    }
+  }
 
   const connect = (
     userId: string,
@@ -39,8 +47,10 @@ export function useWebSocket() {
         if (event.type === 'token') {
           streamingContent.value += event.delta
           isStreaming.value = true
+          waitingResponse.value = false
         } else if (event.type === 'final' || event.type === 'error' || event.type === 'approval_required') {
           isStreaming.value = false
+          waitingResponse.value = false
           if (event.type === 'approval_required') {
             streamingContent.value = ''
           }
@@ -54,11 +64,13 @@ export function useWebSocket() {
       () => {
         connected.value = false
         isStreaming.value = false
+        waitingResponse.value = false
         tryReconnect()
       },
       () => {
         connected.value = false
         isStreaming.value = false
+        waitingResponse.value = false
         tryReconnect()
       }
     )
@@ -72,7 +84,11 @@ export function useWebSocket() {
   }
 
   const send = (content: string) => {
+    if (!ws.value || ws.value.readyState !== WebSocket.OPEN) {
+      return false
+    }
     streamingContent.value = ''
+    waitingResponse.value = true
     return sendMessage(ws.value, content)
   }
 
@@ -85,6 +101,7 @@ export function useWebSocket() {
     ws.value = null
     connected.value = false
     isStreaming.value = false
+    waitingResponse.value = false
     streamingContent.value = ''
     currentThreadId = ''
   }
@@ -93,12 +110,20 @@ export function useWebSocket() {
     streamingContent.value = ''
   }
 
-  onUnmounted(disconnect)
+  onMounted(() => {
+    window.addEventListener('beforeunload', handleBeforeUnload)
+  })
+
+  onUnmounted(() => {
+    window.removeEventListener('beforeunload', handleBeforeUnload)
+    disconnect()
+  })
 
   return {
     connected,
     streamingContent,
     isStreaming,
+    waitingResponse,
     connect,
     send,
     disconnect,

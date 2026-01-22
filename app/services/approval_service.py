@@ -7,7 +7,7 @@ import copy
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from agents.top_supervisor import create_top_supervisor
 from config.settings import get_settings
@@ -55,16 +55,42 @@ class ApprovalResolution:
 
 
 class ApprovalStore:
-    """In-memory approval store.
+    """In-memory approval store with resolve locking.
 
     Invariants:
         - Store is process-local; data is not persisted across restarts.
+        - Only one resolve operation per approval_id at a time.
     """
 
     def __init__(self) -> None:
         """Initialize the approval store."""
         self._records: Dict[str, ApprovalRecord] = {}
         self._lock = asyncio.Lock()
+        self._resolving_ids: Set[str] = set()
+
+    async def try_start_resolve(self, approval_id: str) -> bool:
+        """Try to acquire resolve lock for an approval.
+
+        Args:
+            approval_id: Approval identifier.
+
+        Returns:
+            bool: True if lock acquired, False if already resolving.
+        """
+        async with self._lock:
+            if approval_id in self._resolving_ids:
+                return False
+            self._resolving_ids.add(approval_id)
+            return True
+
+    async def finish_resolve(self, approval_id: str) -> None:
+        """Release resolve lock for an approval.
+
+        Args:
+            approval_id: Approval identifier.
+        """
+        async with self._lock:
+            self._resolving_ids.discard(approval_id)
 
     async def create(self, record: ApprovalRecord) -> ApprovalRecord:
         """Create and store an approval record.
@@ -251,38 +277,50 @@ class ApprovalService:
                 next_approval=None,
             )
 
-        resume_map = self._build_resume_map(record, decision, edited_args)
-        result = await self._resume_agent(record.thread_id, resume_map)
-        record.decision = decision
-        record.resolved_at = datetime.now(timezone.utc)
-
-        if result.get("__interrupt__"):
-            record.status = self._map_decision_status(decision)
-            await _STORE.update(record)
-            next_record = await self.create_approval(
-                user_id,
-                record.thread_id,
-                result["__interrupt__"],
+        # 尝试获取处理锁
+        if not await _STORE.try_start_resolve(approval_id):
+            return ApprovalResolution(
+                approval_id=record.approval_id,
+                status="processing",
+                result_content=None,
+                next_approval=None,
             )
+
+        try:
+            resume_map = self._build_resume_map(record, decision, edited_args)
+            result = await self._resume_agent(record.thread_id, resume_map)
+            record.decision = decision
+            record.resolved_at = datetime.now(timezone.utc)
+
+            if result.get("__interrupt__"):
+                record.status = self._map_decision_status(decision)
+                await _STORE.update(record)
+                next_record = await self.create_approval(
+                    user_id,
+                    record.thread_id,
+                    result["__interrupt__"],
+                )
+                return ApprovalResolution(
+                    approval_id=record.approval_id,
+                    status=record.status,
+                    result_content=None,
+                    next_approval=next_record,
+                )
+
+            content = ""
+            if result.get("messages"):
+                content = result["messages"][-1].content
+            record.status = self._map_decision_status(decision)
+            record.result_content = content
+            await _STORE.update(record)
             return ApprovalResolution(
                 approval_id=record.approval_id,
                 status=record.status,
-                result_content=None,
-                next_approval=next_record,
+                result_content=content,
+                next_approval=None,
             )
-
-        content = ""
-        if result.get("messages"):
-            content = result["messages"][-1].content
-        record.status = self._map_decision_status(decision)
-        record.result_content = content
-        await _STORE.update(record)
-        return ApprovalResolution(
-            approval_id=record.approval_id,
-            status=record.status,
-            result_content=content,
-            next_approval=None,
-        )
+        finally:
+            await _STORE.finish_resolve(approval_id)
 
     async def _resume_agent(self, thread_id: str, resume_map: Dict[str, Any]) -> dict:
         """Resume the agent execution using LangGraph Command.

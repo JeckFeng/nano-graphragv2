@@ -19,9 +19,12 @@ const conversationStore = useConversationStore()
 const messageStore = useMessageStore()
 const message = useMessage()
 
-const submitting = ref(false)
 const isEditing = ref(false)
 const editedArgs = ref<Record<string, unknown>>({})
+
+// 使用 Store 的 isResolving 判断处理状态
+const isProcessing = computed(() => approvalStore.isResolving(props.approval.approval_id))
+const isDisabled = computed(() => isProcessing.value || props.approval.status !== 'pending')
 
 // 提取第一个工具调用信息
 const toolInfo = computed(() => {
@@ -49,8 +52,12 @@ const cancelEdit = () => {
 }
 
 const handleDecision = async (decision: string) => {
+  if (isProcessing.value) {
+    message.warning('正在处理中，请稍候')
+    return
+  }
+  
   try {
-    submitting.value = true
     const args = decision === 'edit' ? editedArgs.value : undefined
     const result = await approvalStore.resolve(userStore.userId, props.approval.approval_id, decision, args)
     if (result.result_content && props.approval.thread_id === conversationStore.currentThreadId) {
@@ -64,10 +71,9 @@ const handleDecision = async (decision: string) => {
     message.success(decision === 'approve' ? '已批准' : decision === 'reject' ? '已拒绝' : '已编辑并批准')
     isEditing.value = false
     emit('resolved')
-  } catch {
-    message.error('提交决策失败')
-  } finally {
-    submitting.value = false
+  } catch (e: unknown) {
+    const err = e as Error
+    message.error(err.message || '提交决策失败')
   }
 }
 </script>
@@ -91,10 +97,10 @@ const handleDecision = async (decision: string) => {
       <template v-if="isEditing">
         <JsonEditor v-model="editedArgs" />
         <NSpace class="mt-4">
-          <NButton type="primary" :loading="submitting" @click="handleDecision('edit')">
+          <NButton type="primary" :loading="isProcessing" :disabled="isDisabled" @click="handleDecision('edit')">
             保存并批准
           </NButton>
-          <NButton @click="cancelEdit">取消</NButton>
+          <NButton :disabled="isProcessing" @click="cancelEdit">取消</NButton>
         </NSpace>
       </template>
       
@@ -102,13 +108,13 @@ const handleDecision = async (decision: string) => {
         <pre class="bg-base p-3 rounded text-sm overflow-auto">{{ JSON.stringify(toolInfo.args, null, 2) }}</pre>
         
         <NSpace class="mt-4" v-if="approval.status === 'pending'">
-          <NButton type="success" :loading="submitting" @click="handleDecision('approve')">
+          <NButton type="success" :loading="isProcessing" :disabled="isDisabled" @click="handleDecision('approve')">
             批准
           </NButton>
-          <NButton type="error" :loading="submitting" @click="handleDecision('reject')">
+          <NButton type="error" :loading="isProcessing" :disabled="isDisabled" @click="handleDecision('reject')">
             拒绝
           </NButton>
-          <NButton v-if="canEdit" @click="startEdit">
+          <NButton v-if="canEdit" :disabled="isDisabled" @click="startEdit">
             编辑
           </NButton>
         </NSpace>

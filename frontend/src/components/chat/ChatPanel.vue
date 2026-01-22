@@ -23,6 +23,7 @@ const {
   connected,
   streamingContent,
   isStreaming,
+  waitingResponse,
   connect,
   send,
   disconnect,
@@ -32,7 +33,6 @@ const {
 // 处理 WebSocket 事件
 const handleWsEvent = (event: WsEvent) => {
   if (event.type === 'final') {
-    // 流式结束，添加完整消息
     const newMessage: Message = {
       id: event.message_id || Date.now(),
       role: 'assistant',
@@ -64,7 +64,6 @@ const handleSend = (content: string) => {
     return
   }
   
-  // 添加用户消息到列表
   const userMessage: Message = {
     id: Date.now(),
     role: 'user',
@@ -95,6 +94,11 @@ watch(
       正在连接...
     </div>
     
+    <!-- 思考中提示 -->
+    <div v-else-if="waitingResponse && !isStreaming" class="px-4 py-2 bg-blue-500/20 text-blue-600 text-sm text-center">
+      智能体正在思考...
+    </div>
+    
     <!-- 消息列表 -->
     <MessageList
       :messages="messageStore.messages"
@@ -105,7 +109,7 @@ watch(
     
     <!-- 输入框 -->
     <ChatInput
-      :disabled="!connected || isStreaming"
+      :disabled="!connected || isStreaming || waitingResponse"
       @send="handleSend"
     />
   </div>

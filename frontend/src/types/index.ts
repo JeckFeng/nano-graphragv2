@@ -9,6 +9,14 @@ export interface Message {
   role: 'user' | 'assistant' | 'tool'
   content: string
   created_at: string
+  artifacts?: RouteArtifact[]
+}
+
+export interface RouteArtifact {
+  type: 'route_polyline'
+  polylines: string[]
+  origin: string
+  destination: string
 }
 
 export interface ApprovalInterrupt {
@@ -63,7 +71,7 @@ export interface WsTokenEvent extends WsEventBase {
 export interface WsFinalEvent extends WsEventBase {
   type: 'final'
   content: string
-  artifacts?: string[]
+  artifacts?: RouteArtifact[]
 }
 
 export interface WsErrorEvent extends WsEventBase {
