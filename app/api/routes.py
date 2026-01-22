@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 from uuid import UUID
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import FileResponse
@@ -30,6 +31,8 @@ from app.services.artifact_service import ArtifactService
 from app.services.chat_service import ChatService
 from app.services.conversation_service import ConversationService
 from config.settings import get_settings
+from app.observability import log_event, set_ctx_ws, clear_ctx, set_message_id
+from app.observability.summarize import summarize_payload
 
 router = APIRouter()
 v1_router = APIRouter(prefix="/v1")
@@ -430,6 +433,25 @@ async def ws_chat(websocket: WebSocket) -> None:
         await websocket.close(code=1008)
         return
 
+    conn_id = uuid.uuid4().hex
+    request_id = uuid.uuid4().hex
+    set_ctx_ws(request_id=request_id, user_id=user_id, thread_id=thread_id, conn_id=conn_id)
+
+    in_bytes = 0
+    out_bytes = 0
+
+    log_event(
+        "ws",
+        {
+            "source": "backend",
+            "component": "ws",
+            "event_type": "system",
+            "event_name": "ws_connect",
+            "ws_event_type": "connect",
+            "payload_bytes": 0,
+        },
+    )
+
     settings = get_settings()
     runner = TopSupervisorRunner(settings.langgraph_memory_database_url)
 
@@ -441,78 +463,151 @@ async def ws_chat(websocket: WebSocket) -> None:
     try:
         async for session in get_session():
             service = ChatService(session, runner)
-            try:
-                while True:
-                    payload = await websocket.receive_json()
-                    if payload.get("type") != "user_message":
-                        await websocket.send_json(
-                            build_ws_payload(
-                                {
-                                    "type": "error",
-                                    "code": "INVALID_MESSAGE",
-                                    "message": "Unsupported message type",
-                                },
-                                thread_id,
-                                sequence=0,
-                            )
-                        )
-                        continue
-                    content = payload.get("content", "")
-                    if not isinstance(content, str) or not content.strip():
-                        await websocket.send_json(
-                            build_ws_payload(
-                                {
-                                    "type": "error",
-                                    "code": "EMPTY_CONTENT",
-                                    "message": "Message content is empty",
-                                },
-                                thread_id,
-                                sequence=0,
-                            )
-                        )
-                        continue
+        async def send_with_log(payload: dict) -> None:
+            nonlocal out_bytes
+            summary = summarize_payload(payload)
+            out_bytes += int(summary.get("bytes", 0))
+            log_event(
+                "ws",
+                {
+                    "source": "backend",
+                    "component": "ws",
+                    "event_type": "exchange",
+                    "event_name": "ws_message_out",
+                    "ws_event_type": payload.get("type"),
+                    "payload_keys": summary.get("keys"),
+                    "payload_bytes": summary.get("bytes"),
+                },
+            )
+            await websocket.send_json(payload)
 
-                    sequence = 0
-                    async for event in service.stream_chat(
-                        external_user_id=user_id,
-                        thread_id=thread_uuid,
-                        user_content=content,
-                        enable_streaming=enable_streaming,
-                    ):
-                        sequence += 1
-                        await websocket.send_json(
-                            build_ws_payload(event, thread_id, sequence=sequence)
+        try:
+            while True:
+                payload = await websocket.receive_json()
+                summary = summarize_payload(payload)
+                in_bytes += int(summary.get("bytes", 0))
+                log_event(
+                    "ws",
+                    {
+                        "source": "backend",
+                        "component": "ws",
+                        "event_type": "exchange",
+                        "event_name": "ws_message_in",
+                        "ws_event_type": payload.get("type"),
+                        "payload_keys": summary.get("keys"),
+                        "payload_bytes": summary.get("bytes"),
+                    },
+                )
+                if payload.get("type") != "user_message":
+                    await send_with_log(
+                        build_ws_payload(
+                            {
+                                "type": "error",
+                                "code": "INVALID_MESSAGE",
+                                "message": "Unsupported message type",
+                            },
+                            thread_id,
+                            sequence=0,
                         )
-            except WebSocketDisconnect:
-                return
-            except PermissionError:
-                await websocket.send_json(
-                    build_ws_payload(
-                        {
-                            "type": "error",
-                            "code": "NOT_AUTHORIZED",
-                            "message": "Thread not found",
-                        },
-                        thread_id,
-                        sequence=0,
                     )
-                )
-                await websocket.close(code=1008)
-                return
-            except Exception:
-                await websocket.send_json(
-                    build_ws_payload(
-                        {
-                            "type": "error",
-                            "code": "SERVER_ERROR",
-                            "message": "Unexpected server error",
-                        },
-                        thread_id,
-                        sequence=0,
+                    continue
+                content = payload.get("content", "")
+                if not isinstance(content, str) or not content.strip():
+                    await send_with_log(
+                        build_ws_payload(
+                            {
+                                "type": "error",
+                                "code": "EMPTY_CONTENT",
+                                "message": "Message content is empty",
+                            },
+                            thread_id,
+                            sequence=0,
+                        )
                     )
+                    continue
+                set_message_id(None)
+
+                sequence = 0
+                async for event in service.stream_chat(
+                    external_user_id=user_id,
+                    thread_id=thread_uuid,
+                    user_content=content,
+                    enable_streaming=enable_streaming,
+                ):
+                    sequence += 1
+                    await send_with_log(build_ws_payload(event, thread_id, sequence=sequence))
+        except WebSocketDisconnect:
+            log_event(
+                "ws",
+                {
+                    "source": "backend",
+                    "component": "ws",
+                    "event_type": "system",
+                    "event_name": "ws_disconnect",
+                    "ws_event_type": "disconnect",
+                    "payload_bytes": out_bytes + in_bytes,
+                    "in_bytes": in_bytes,
+                    "out_bytes": out_bytes,
+                },
+            )
+            clear_ctx()
+            return
+        except PermissionError:
+            await send_with_log(
+                build_ws_payload(
+                    {
+                        "type": "error",
+                        "code": "NOT_AUTHORIZED",
+                        "message": "Thread not found",
+                    },
+                    thread_id,
+                    sequence=0,
                 )
-                await websocket.close(code=1011)
-                return
+            )
+            await websocket.close(code=1008)
+            log_event(
+                "ws",
+                {
+                    "source": "backend",
+                    "component": "ws",
+                    "event_type": "system",
+                    "event_name": "ws_disconnect",
+                    "ws_event_type": "disconnect",
+                    "payload_bytes": out_bytes + in_bytes,
+                    "in_bytes": in_bytes,
+                    "out_bytes": out_bytes,
+                },
+            )
+            clear_ctx()
+            return
+        except Exception:
+            await send_with_log(
+                build_ws_payload(
+                    {
+                        "type": "error",
+                        "code": "SERVER_ERROR",
+                        "message": "Unexpected server error",
+                    },
+                    thread_id,
+                    sequence=0,
+                )
+            )
+            await websocket.close(code=1011)
+            log_event(
+                "ws",
+                {
+                    "source": "backend",
+                    "component": "ws",
+                    "event_type": "system",
+                    "event_name": "ws_disconnect",
+                    "ws_event_type": "disconnect",
+                    "payload_bytes": out_bytes + in_bytes,
+                    "in_bytes": in_bytes,
+                    "out_bytes": out_bytes,
+                },
+            )
+            clear_ctx()
+            return
     finally:
         # 确保断开时注销连接
         await ws_manager.unregister(thread_id)

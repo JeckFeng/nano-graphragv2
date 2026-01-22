@@ -35,6 +35,8 @@ from typing import Optional, Dict
 from langchain_core.language_models.chat_models import BaseChatModel
 from core.llm_config import LLMConfig
 from core.llm_providers import LLMProvider, LLM_PROVIDER_INFO
+from app.observability.config import get_obs_config
+from app.observability.llm_callback import ObservabilityLLMCallback
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +118,7 @@ class LLMFactory:
         """
         from langchain_openai import ChatOpenAI
         
+        callbacks = cls._build_callbacks()
         return ChatOpenAI(
             model=config.model_name,
             api_key=config.get_api_key_value(),
@@ -123,6 +126,7 @@ class LLMFactory:
             temperature=config.temperature,
             max_tokens=config.max_tokens,
             timeout=config.timeout,
+            callbacks=callbacks or None,
         )
     
     @classmethod
@@ -140,6 +144,7 @@ class LLMFactory:
         
         base_url = config.base_url or LLM_PROVIDER_INFO[LLMProvider.DEEPSEEK]["default_base_url"]
         
+        callbacks = cls._build_callbacks()
         return ChatOpenAI(
             model=config.model_name,
             api_key=config.get_api_key_value(),
@@ -147,6 +152,7 @@ class LLMFactory:
             temperature=config.temperature,
             max_tokens=config.max_tokens,
             timeout=config.timeout,
+            callbacks=callbacks or None,
         )
     
     @classmethod
@@ -164,6 +170,7 @@ class LLMFactory:
         
         base_url = config.base_url or LLM_PROVIDER_INFO[LLMProvider.DASHSCOPE]["default_base_url"]
         
+        callbacks = cls._build_callbacks()
         return ChatOpenAI(
             model=config.model_name,
             api_key=config.get_api_key_value(),
@@ -171,7 +178,16 @@ class LLMFactory:
             temperature=config.temperature,
             max_tokens=config.max_tokens,
             timeout=config.timeout,
+            callbacks=callbacks or None,
         )
+
+    @staticmethod
+    def _build_callbacks() -> list:
+        """Build callback handlers for LLM usage logging."""
+        config = get_obs_config()
+        if not config.enabled_llm:
+            return []
+        return [ObservabilityLLMCallback()]
     
     @classmethod
     def clear_cache(cls) -> None:

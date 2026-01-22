@@ -2,7 +2,7 @@
 """
 日志清理脚本
 
-用于清理 Logs 目录下的所有 .log 和 .json 文件。
+用于清理 Logs 目录下的所有 .log、.json 和 .jsonl 文件。
 
 注意：
     - 只删除文件，不删除任何目录（包括文件夹、子文件夹、孙子文件夹等）
@@ -92,55 +92,33 @@ def find_log_files(
     if days is not None:
         cutoff_time = datetime.now() - timedelta(days=days)
     
-    # 遍历所有 .log 和 .json 文件（只处理文件，不处理目录）
-    for file_path in log_dir.rglob("*.log"):
-        # 确保是文件，不是目录
-        if not file_path.is_file():
-            continue
-            
-        try:
-            stat = file_path.stat()
-            file_info = {
-                "size": stat.st_size,
-                "modified": datetime.fromtimestamp(stat.st_mtime),
-            }
-            
-            # 检查时间条件
-            if cutoff_time and file_info["modified"] > cutoff_time:
+    # 遍历所有 .log/.json/.jsonl 文件（只处理文件，不处理目录）
+    patterns = ["*.log", "*.json", "*.jsonl"]
+    for pattern in patterns:
+        for file_path in log_dir.rglob(pattern):
+            # 确保是文件，不是目录
+            if not file_path.is_file():
                 continue
-            
-            # 检查大小条件
-            if min_size and file_info["size"] < min_size:
-                continue
-            
-            log_files.append((file_path, file_info))
-        except Exception as e:
-            print(f"警告: 无法读取文件 {file_path}: {e}", file=sys.stderr)
-    
-    for file_path in log_dir.rglob("*.json"):
-        # 确保是文件，不是目录
-        if not file_path.is_file():
-            continue
-            
-        try:
-            stat = file_path.stat()
-            file_info = {
-                "size": stat.st_size,
-                "modified": datetime.fromtimestamp(stat.st_mtime),
-            }
-            
-            # 检查时间条件
-            if cutoff_time and file_info["modified"] > cutoff_time:
-                continue
-            
-            # 检查大小条件
-            if min_size and file_info["size"] < min_size:
-                continue
-            
-            log_files.append((file_path, file_info))
-        except Exception as e:
-            print(f"警告: 无法读取文件 {file_path}: {e}", file=sys.stderr)
-    
+                
+            try:
+                stat = file_path.stat()
+                file_info = {
+                    "size": stat.st_size,
+                    "modified": datetime.fromtimestamp(stat.st_mtime),
+                }
+                
+                # 检查时间条件
+                if cutoff_time and file_info["modified"] > cutoff_time:
+                    continue
+                
+                # 检查大小条件
+                if min_size and file_info["size"] < min_size:
+                    continue
+                
+                log_files.append((file_path, file_info))
+            except Exception as e:
+                print(f"警告: 无法读取文件 {file_path}: {e}", file=sys.stderr)
+
     return log_files
 
 
@@ -323,4 +301,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

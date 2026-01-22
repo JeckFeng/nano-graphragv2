@@ -8,6 +8,7 @@ from typing import AsyncIterator, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.agent_runner import AgentRunner
+from app.observability import set_message_id
 from app.services.message_service import MessageService
 from app.services.thread_service import ThreadService
 from app.services.user_service import UserService
@@ -93,6 +94,7 @@ class ChatService:
                             content,
                         )
                     event["message_id"] = assistant_message_id
+                    set_message_id(assistant_message_id)
                 yield event
                 continue
 
@@ -112,6 +114,7 @@ class ChatService:
                     )
                 event["message_id"] = assistant_message_id
                 event["content"] = content
+                set_message_id(assistant_message_id)
                 yield event
                 continue
 

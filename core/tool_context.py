@@ -234,6 +234,16 @@ def _record_log(
         duration: 执行时长（秒）
     """
     thread_id = _current_thread_id.get()
+    run_id = None
+    try:
+        from app.observability.context import get_ctx as _get_obs_ctx
+
+        obs_ctx = _get_obs_ctx()
+        run_id = obs_ctx.get("run_id")
+        if thread_id is None:
+            thread_id = obs_ctx.get("thread_id")
+    except Exception:
+        run_id = None
     
     # 构建输入参数（合并 args 和 kwargs）
     input_params: Dict[str, Any] = {}
@@ -248,6 +258,7 @@ def _record_log(
         "level": "DEBUG" if is_success else "ERROR",
         "logger": "tool",
         "thread_id": thread_id or "unknown",
+        "run_id": run_id,
         "tool_name": tool_name,
         "function_type": function_type,
         "input_params": input_params,

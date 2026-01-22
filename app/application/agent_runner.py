@@ -5,10 +5,13 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 import ast
 import re
+import time
+import uuid
 from typing import Any, Optional
 
 from agents.top_supervisor import create_top_supervisor
 from app.services.approval_service import ApprovalService
+from app.observability import log_event, set_run_id
 from config.settings import get_settings
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
@@ -72,66 +75,112 @@ class TopSupervisorRunner(AgentRunner):
         Yields:
             dict: Event payloads.
         """
-        config = {"configurable": {"thread_id": thread_id}}
-        async with AsyncPostgresSaver.from_conn_string(self._db_uri) as checkpointer:
-            await checkpointer.setup()
-            agent, _ = create_top_supervisor(checkpointer)
-            if enable_streaming and hasattr(agent, "astream_events"):
-                buffered_tokens: list[str] = []
-                interrupts_list: Optional[list] = None
-                async for event in agent.astream_events(
+        run_id = uuid.uuid4().hex
+        set_run_id(run_id)
+        start = time.perf_counter()
+        ok = True
+        log_event(
+            "agent",
+            {
+                "source": "backend",
+                "component": "agent",
+                "event_type": "system",
+                "event_name": "agent_run_start",
+                "graph_name": "top_supervisor",
+                "ok": True,
+            },
+        )
+        try:
+            config = {"configurable": {"thread_id": thread_id}}
+            async with AsyncPostgresSaver.from_conn_string(self._db_uri) as checkpointer:
+                await checkpointer.setup()
+                agent, _ = create_top_supervisor(checkpointer)
+                if enable_streaming and hasattr(agent, "astream_events"):
+                    buffered_tokens: list[str] = []
+                    interrupts_list: Optional[list] = None
+                    async for event in agent.astream_events(
+                        {"messages": [{"role": "user", "content": user_content}]},
+                        config=config,
+                    ):
+                        interrupts_list = self._extract_interrupts(event)
+                        if interrupts_list:
+                            break
+                        if isinstance(event, dict) and event.get("event") == "on_tool_error":
+                            error_detail = (event.get("data") or {}).get("error")
+                            error_message = str(error_detail) if error_detail is not None else "Tool execution failed"
+                            yield {
+                                "type": "error",
+                                "code": "TOOL_ERROR",
+                                "message": error_message,
+                            }
+                            return
+                        mapped = self._map_event(event)
+                        if mapped:
+                            delta = mapped.get("delta", "")
+                            if isinstance(delta, str) and delta:
+                                buffered_tokens.append(delta)
+                            yield mapped
+
+                    if interrupts_list:
+                        approval_service = ApprovalService()
+                        approval = await approval_service.create_approval(
+                            user_id=user_id,
+                            thread_id=thread_id,
+                            interrupts_list=interrupts_list,
+                        )
+                        yield self._build_approval_event(approval)
+                        return
+
+                    if buffered_tokens:
+                        yield {"type": "final", "content": "".join(buffered_tokens)}
+                        return
+
+                result = await agent.ainvoke(
                     {"messages": [{"role": "user", "content": user_content}]},
                     config=config,
-                ):
-                    interrupts_list = self._extract_interrupts(event)
-                    if interrupts_list:
-                        break
-                    if isinstance(event, dict) and event.get("event") == "on_tool_error":
-                        error_detail = (event.get("data") or {}).get("error")
-                        error_message = str(error_detail) if error_detail is not None else "Tool execution failed"
-                        yield {
-                            "type": "error",
-                            "code": "TOOL_ERROR",
-                            "message": error_message,
-                        }
-                        return
-                    mapped = self._map_event(event)
-                    if mapped:
-                        delta = mapped.get("delta", "")
-                        if isinstance(delta, str) and delta:
-                            buffered_tokens.append(delta)
-                        yield mapped
-
-                if interrupts_list:
+                )
+                if result.get("__interrupt__"):
                     approval_service = ApprovalService()
                     approval = await approval_service.create_approval(
                         user_id=user_id,
                         thread_id=thread_id,
-                        interrupts_list=interrupts_list,
+                        interrupts_list=result["__interrupt__"],
                     )
                     yield self._build_approval_event(approval)
                     return
 
-                if buffered_tokens:
-                    yield {"type": "final", "content": "".join(buffered_tokens)}
-                    return
-
-            result = await agent.ainvoke(
-                {"messages": [{"role": "user", "content": user_content}]},
-                config=config,
+                content = result["messages"][-1].content
+                yield {"type": "final", "content": content}
+        except Exception as exc:
+            ok = False
+            log_event(
+                "agent",
+                {
+                    "source": "backend",
+                    "component": "agent",
+                    "event_type": "error",
+                    "event_name": "agent_run_error",
+                    "graph_name": "top_supervisor",
+                    "ok": False,
+                    "error": repr(exc),
+                },
             )
-            if result.get("__interrupt__"):
-                approval_service = ApprovalService()
-                approval = await approval_service.create_approval(
-                    user_id=user_id,
-                    thread_id=thread_id,
-                    interrupts_list=result["__interrupt__"],
-                )
-                yield self._build_approval_event(approval)
-                return
-
-            content = result["messages"][-1].content
-            yield {"type": "final", "content": content}
+            raise
+        finally:
+            latency_ms = int((time.perf_counter() - start) * 1000)
+            log_event(
+                "agent",
+                {
+                    "source": "backend",
+                    "component": "agent",
+                    "event_type": "system",
+                    "event_name": "agent_run_end",
+                    "graph_name": "top_supervisor",
+                    "ok": ok,
+                    "latency_ms": latency_ms,
+                },
+            )
+            set_run_id(None)
 
     def _map_event(self, event: Any) -> Optional[dict]:
         """Map a streaming event to a standard payload.
