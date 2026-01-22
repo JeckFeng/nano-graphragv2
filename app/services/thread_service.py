@@ -88,3 +88,19 @@ class ThreadService:
             select(Thread.id).where(Thread.id == thread_id, Thread.user_id == user_id)
         )
         return result.scalar_one_or_none() is not None
+
+    async def delete_thread(self, thread_id: uuid.UUID) -> bool:
+        """Delete a thread and all related data (cascade).
+
+        Args:
+            thread_id: Thread identifier.
+
+        Returns:
+            bool: True if deleted, False if not found.
+        """
+        thread = await self.get_thread(thread_id)
+        if not thread:
+            return False
+        await self._session.delete(thread)
+        await self._session.commit()
+        return True

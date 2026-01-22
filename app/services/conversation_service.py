@@ -90,3 +90,24 @@ class ConversationService:
         if not await self._thread_service.verify_thread_owner(user.id, thread_id):
             return None
         return await self._message_service.list_messages(thread_id, limit=limit, offset=offset)
+
+    async def delete_conversation(
+        self,
+        external_user_id: str,
+        thread_id: uuid.UUID,
+    ) -> bool:
+        """Delete a conversation thread owned by the user.
+
+        Args:
+            external_user_id: External user identifier.
+            thread_id: Thread identifier.
+
+        Returns:
+            bool: True if deleted, False if not found or not owned.
+        """
+        user = await self._user_service.get_user_by_external_id(external_user_id)
+        if not user:
+            return False
+        if not await self._thread_service.verify_thread_owner(user.id, thread_id):
+            return False
+        return await self._thread_service.delete_thread(thread_id)

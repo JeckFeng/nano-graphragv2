@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { NSpin } from 'naive-ui'
-import { useConversationStore } from '@/stores/conversation'
+import { NSpin, useMessage } from 'naive-ui'
+import { useConversationStore, useUserStore } from '@/stores'
 import ConversationItem from './ConversationItem.vue'
 
 const conversationStore = useConversationStore()
+const userStore = useUserStore()
+const message = useMessage()
 
 const emit = defineEmits<{
   select: [threadId: string]
@@ -11,6 +13,15 @@ const emit = defineEmits<{
 
 const handleSelect = (threadId: string) => {
   emit('select', threadId)
+}
+
+const handleDelete = async (threadId: string) => {
+  try {
+    await conversationStore.remove(userStore.userId, threadId)
+    message.success('会话已删除')
+  } catch {
+    message.error('删除失败')
+  }
 }
 </script>
 
@@ -27,6 +38,7 @@ const handleSelect = (threadId: string) => {
           :conversation="conv"
           :active="conv.thread_id === conversationStore.currentId"
           @select="handleSelect"
+          @delete="handleDelete"
         />
       </div>
     </NSpin>

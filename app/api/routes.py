@@ -103,6 +103,32 @@ async def list_conversations(
     return ConversationListResponse(conversations=summaries)
 
 
+@v1_router.delete(
+    "/conversations/{thread_id}",
+    status_code=status.HTTP_200_OK,
+)
+async def delete_conversation(
+    thread_id: UUID,
+    user_id: str = Query(..., min_length=1, max_length=128),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Delete a conversation thread.
+
+    Args:
+        thread_id: Thread identifier.
+        user_id: External user identifier.
+        session: Database session dependency.
+
+    Returns:
+        dict: Deletion result.
+    """
+    service = ConversationService(session)
+    deleted = await service.delete_conversation(user_id, thread_id)
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
+    return {"deleted": True, "thread_id": str(thread_id)}
+
+
 @v1_router.get(
     "/conversations/{thread_id}/messages",
     response_model=MessageListResponse,

@@ -22,10 +22,23 @@ export const useConversationStore = defineStore('conversation', () => {
   }
 
   const create = async (userId: string, title?: string) => {
-    const res = await conversationApi.create(userId, title)
+    // 生成带时间戳的默认标题
+    const now = new Date()
+    const timestamp = now.toLocaleString('zh-CN', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    }).replace(/\//g, '-')
+    const defaultTitle = title || `新会话[${timestamp}]`
+    
+    const res = await conversationApi.create(userId, defaultTitle)
     const newConv: ConversationSummary = {
       thread_id: res.data.thread_id,
-      title: title || null,
+      title: defaultTitle,
       created_at: res.data.created_at,
     }
     list.value.unshift(newConv)
@@ -41,5 +54,13 @@ export const useConversationStore = defineStore('conversation', () => {
     currentId.value = null
   }
 
-  return { list, currentId, currentThreadId, loading, fetchList, create, select, clear }
+  const remove = async (userId: string, threadId: string) => {
+    await conversationApi.delete(threadId, userId)
+    list.value = list.value.filter((c) => c.thread_id !== threadId)
+    if (currentId.value === threadId) {
+      currentId.value = list.value.length > 0 ? list.value[0].thread_id : null
+    }
+  }
+
+  return { list, currentId, currentThreadId, loading, fetchList, create, select, clear, remove }
 })

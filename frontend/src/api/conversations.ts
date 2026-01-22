@@ -14,4 +14,9 @@ export const conversationApi = {
     http.get<{ messages: Message[] }>(`/v1/conversations/${threadId}/messages`, {
       params: { user_id: userId, limit, offset },
     }),
+
+  delete: (threadId: string, userId: string) =>
+    http.delete<{ deleted: boolean; thread_id: string }>(`/v1/conversations/${threadId}`, {
+      params: { user_id: userId },
+    }),
 }
