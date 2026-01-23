@@ -1,14 +1,16 @@
 <script setup lang="ts">
 import { watch, onMounted } from 'vue'
 import { NEmpty, useMessage } from 'naive-ui'
-import { useConversationStore, useMessageStore, useUserStore, useApprovalStore } from '@/stores'
+import { useConversationStore, useMessageStore, useUserStore, useApprovalStore, useTraceStore } from '@/stores'
 import ChatPanel from '@/components/chat/ChatPanel.vue'
 
 const conversationStore = useConversationStore()
 const messageStore = useMessageStore()
 const userStore = useUserStore()
 const approvalStore = useApprovalStore()
+const traceStore = useTraceStore()
 const message = useMessage()
+const traceEnabled = String(import.meta.env.VITE_TRACE_PANEL_ENABLED).toLowerCase() === 'true'
 
 // 检查当前会话是否有待处理的审批
 const checkPendingApprovals = async () => {
@@ -41,9 +43,13 @@ watch(
   async (threadId) => {
     if (threadId) {
       await messageStore.loadMessages(threadId, userStore.userId)
+      if (traceEnabled) {
+        await traceStore.loadThreadTraces(threadId, userStore.userId)
+      }
       await checkPendingApprovals()
     } else {
       messageStore.clearMessages()
+      traceStore.clearTraces()
     }
   }
 )
@@ -51,6 +57,9 @@ watch(
 onMounted(async () => {
   if (conversationStore.currentThreadId) {
     await messageStore.loadMessages(conversationStore.currentThreadId, userStore.userId)
+    if (traceEnabled) {
+      await traceStore.loadThreadTraces(conversationStore.currentThreadId, userStore.userId)
+    }
     await checkPendingApprovals()
   }
 })

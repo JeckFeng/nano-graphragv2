@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, watch } from 'vue'
 import { useMessage } from 'naive-ui'
-import { useUserStore, useConversationStore, useMessageStore, useApprovalStore } from '@/stores'
+import { useUserStore, useConversationStore, useMessageStore, useApprovalStore, useTraceStore } from '@/stores'
 import { useToast } from '@/composables/useToast'
 import LayoutShell from '@/components/layout/LayoutShell.vue'
 import ChatView from '@/views/ChatView.vue'
@@ -11,6 +11,7 @@ const userStore = useUserStore()
 const conversationStore = useConversationStore()
 const messageStore = useMessageStore()
 const approvalStore = useApprovalStore()
+const traceStore = useTraceStore()
 const message = useMessage()
 
 useToast()
@@ -48,6 +49,7 @@ const handleSelect = (threadId: string) => {
 watch(() => userStore.userId, () => {
   conversationStore.clear()
   messageStore.clear()
+  traceStore.clearTraces()
   loadConversations()
   loadApprovals()
 })

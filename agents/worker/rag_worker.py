@@ -29,6 +29,7 @@ from core.tool_context import context_tool, wrap_runnable_with_tool_context
 from core.tool_errors import ToolError
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
+from app.observability.trace_middleware import TraceMiddleware
 from core import LLMFactory, load_llm_config
 from config.settings import get_settings
 from core.prompts.worker.Prompts import RAG_WORKER_PROMPT
@@ -496,6 +497,7 @@ def create_rag_worker() -> tuple:
         ],
         checkpointer=checkpointer,
         system_prompt=RAG_WORKER_PROMPT,
+        middleware=[TraceMiddleware()],
     )
 
     agent = wrap_runnable_with_tool_context(agent)

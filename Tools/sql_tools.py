@@ -95,7 +95,7 @@ async def get_database_schema(
     获取数据库结构信息。
 
     Args:
-        schemas: 要查询的 schema 列表，默认查询 rag_document、public、agent_backend。
+        schemas: 要查询的 schema 列表，默认查询 rag_document、public。
         limit: 每次返回的表数量上限（用于分页），默认 200，传 None 表示不分页。
         offset: 分页起始偏移量，默认 0。
 
@@ -108,7 +108,7 @@ async def get_database_schema(
     settings = get_settings()
 
     if schemas is None:
-        schemas = ["rag_document", "public", "agent_backend"]
+        schemas = ["rag_document", "public"]
     if limit is not None and limit <= 0:
         raise ToolError(
             "分页参数 limit 必须为正数",

@@ -318,10 +318,21 @@ class ApprovalService:
             user_id: External user identifier.
         """
         from app.application.agent_runner import TopSupervisorRunner
+        from app.observability import clear_ctx, set_ctx_ws, set_message_id, set_run_id
         from app.services.ws_manager import ws_manager
 
         thread_id = record.thread_id
         runner = TopSupervisorRunner(self._db_uri)
+
+        # 注入 trace 上下文，确保后续 trace 事件有完整的 thread_id/user_id
+        set_ctx_ws(
+            request_id=uuid.uuid4().hex,
+            user_id=user_id,
+            thread_id=thread_id,
+            conn_id=None,
+        )
+        set_message_id(None)
+        set_run_id(uuid.uuid4().hex)
 
         try:
             config = {"configurable": {"thread_id": thread_id}}
@@ -385,6 +396,7 @@ class ApprovalService:
             })
         finally:
             await _STORE.finish_resolve(record.approval_id)
+            clear_ctx()
 
     async def _handle_new_interrupt(
         self,

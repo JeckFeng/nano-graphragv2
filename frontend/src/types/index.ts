@@ -89,3 +89,74 @@ export interface WsApprovalRequiredEvent extends WsEventBase {
 }
 
 export type WsEvent = WsTokenEvent | WsFinalEvent | WsErrorEvent | WsApprovalRequiredEvent
+
+export type TraceKind =
+  | 'todo_update'
+  | 'tool_span'
+  | 'subagent_dispatch'
+  | 'hitl_interrupt'
+  | 'hitl_resume'
+  | string
+
+export type TracePhase =
+  | 'start'
+  | 'end'
+  | 'update'
+  | 'error'
+  | 'pending'
+  | 'resume'
+  | string
+
+export interface TraceEvent {
+  id: number
+  event_time: string
+  request_id: string | null
+  thread_id: string
+  run_id: string | null
+  message_id: number | null
+  user_id: string | null
+  event_type: string
+  event_name: string
+  trace_kind: TraceKind
+  phase: TracePhase
+  source: string
+  component: string
+  tool_name: string | null
+  subagent_type: string | null
+  ok: boolean | null
+  latency_ms: number | null
+  error: string | null
+  payload: Record<string, unknown>
+  seq: number | null
+}
+
+export interface TraceListResponse {
+  thread_id: string | null
+  run_id: string | null
+  limit: number
+  offset: number
+  traces: TraceEvent[]
+}
+
+export interface TraceWsEvent {
+  event_type: 'trace'
+  event_name?: string
+  trace_kind: TraceKind
+  phase: TracePhase
+  thread_id: string
+  trace_event_id?: number
+  request_id?: string | null
+  run_id?: string | null
+  message_id?: number | null
+  user_id?: string | null
+  source?: string
+  component?: string
+  tool_name?: string | null
+  subagent_type?: string | null
+  ok?: boolean | null
+  latency_ms?: number | null
+  error?: string | null
+  payload?: Record<string, unknown>
+  seq?: number | null
+  ts?: string
+}

@@ -5,13 +5,16 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 import ast
 import re
+import hashlib
+import json
 import time
 import uuid
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 from agents.top_supervisor import create_top_supervisor
 from app.services.approval_service import ApprovalService
 from app.observability import log_event, set_run_id
+from app.observability.trace_publisher import build_trace_event, trace_publish
 from config.settings import get_settings
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
@@ -122,6 +125,12 @@ class TopSupervisorRunner(AgentRunner):
                             yield mapped
 
                     if interrupts_list:
+                        # 保存审批前的 partial 输出到消息表
+                        if buffered_tokens:
+                            partial_content = "".join(buffered_tokens)
+                            await self._save_partial_message(thread_id, partial_content)
+
+                        await self._emit_hitl_trace(interrupts_list)
                         approval_service = ApprovalService()
                         approval = await approval_service.create_approval(
                             user_id=user_id,
@@ -140,6 +149,7 @@ class TopSupervisorRunner(AgentRunner):
                     config=config,
                 )
                 if result.get("__interrupt__"):
+                    await self._emit_hitl_trace(result["__interrupt__"])
                     approval_service = ApprovalService()
                     approval = await approval_service.create_approval(
                         user_id=user_id,
@@ -372,6 +382,93 @@ class TopSupervisorRunner(AgentRunner):
         if hasattr(chunk, "content"):
             return getattr(chunk, "content")
         return None
+
+    @staticmethod
+    def _summarize_value(value: Any) -> Dict[str, Any]:
+        """Summarize a Python value into keys/bytes/hash.
+
+        Args:
+            value: Value to summarize.
+
+        Returns:
+            Dict[str, Any]: Summary dictionary.
+        """
+        try:
+            encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        except TypeError:
+            encoded = repr(value).encode("utf-8")
+        keys = None
+        if isinstance(value, dict):
+            keys = list(value.keys())
+        elif isinstance(value, list):
+            keys = ["<array>"]
+        return {
+            "keys": keys,
+            "bytes": len(encoded),
+            "hash": f"sha256:{hashlib.sha256(encoded).hexdigest()}",
+        }
+
+    async def _emit_hitl_trace(self, interrupts_list: list) -> None:
+        """Emit HITL interrupt trace events.
+
+        Args:
+            interrupts_list: Interrupt objects from LangGraph.
+        """
+        actions: list[Dict[str, Any]] = []
+        for interrupt_obj in interrupts_list:
+            interrupts = getattr(interrupt_obj, "value", None)
+            if not isinstance(interrupts, dict):
+                continue
+            action_requests = interrupts.get("action_requests", [])
+            review_configs = interrupts.get("review_configs", [])
+            review_map = {
+                cfg.get("action_name"): cfg for cfg in review_configs if isinstance(cfg, dict)
+            }
+            for action in action_requests:
+                if not isinstance(action, dict):
+                    continue
+                tool_name = action.get("name")
+                args = action.get("args")
+                review_config = review_map.get(tool_name)
+                actions.append(
+                    {
+                        "tool_name": tool_name,
+                        "args_summary": self._summarize_value(args),
+                        "review_config": review_config,
+                    }
+                )
+
+        payload = {"pending_actions": len(actions), "actions": actions}
+        await trace_publish(
+            build_trace_event(
+                trace_kind="hitl_interrupt",
+                phase="pending",
+                payload=payload,
+                component="agent",
+            )
+        )
+
+    async def _save_partial_message(self, thread_id: str, content: str) -> None:
+        """Save partial assistant message before approval interrupt.
+
+        Args:
+            thread_id: Thread identifier.
+            content: Partial message content.
+        """
+        if not content.strip():
+            return
+
+        from app.infra.db import ASYNC_SESSION_FACTORY
+        from app.services.message_service import MessageService
+
+        async with ASYNC_SESSION_FACTORY() as session:
+            message_service = MessageService(session)
+            await message_service.append_message(
+                thread_id=uuid.UUID(thread_id),
+                role="assistant",
+                content=content,
+                tool_payload={"partial": True, "reason": "approval_interrupt"},
+            )
 
 
 class ParsedInterrupt:

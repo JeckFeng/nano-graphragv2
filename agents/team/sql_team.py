@@ -28,6 +28,7 @@ from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
+from app.observability.trace_middleware import TraceMiddleware
 from core.tool_context import wrap_runnable_with_tool_context
 from core import LLMFactory, load_llm_config
 from core.prompts.team.Prompts import SQL_TEAM_PROMPT
@@ -84,6 +85,7 @@ def create_sql_team_agent() -> tuple:
         system_prompt=SQL_TEAM_PROMPT,
         subagents=subagents,
         checkpointer=checkpointer,
+        middleware=[TraceMiddleware()],
     )
 
     agent = wrap_runnable_with_tool_context(agent)

@@ -28,6 +28,7 @@ from dotenv import load_dotenv
 from core.tool_context import context_tool, wrap_runnable_with_tool_context
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
+from app.observability.trace_middleware import TraceMiddleware
 from core import LLMFactory, load_llm_config
 from Tools.neo4j_tools import (
     check_neo4j_connection,
@@ -172,6 +173,7 @@ def create_neo4j_worker() -> tuple:
         ],
         checkpointer=checkpointer,
         system_prompt=NEO4J_WORKER_PROMPT,
+        middleware=[TraceMiddleware()],
     )
 
     agent = wrap_runnable_with_tool_context(agent)

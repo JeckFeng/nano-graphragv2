@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -85,3 +85,38 @@ class ApprovalResolutionResponse(BaseModel):
     status: str
     result_content: Optional[str]
     next_approval: Optional[ApprovalRecordResponse]
+
+
+class TraceEventResponse(BaseModel):
+    """Response payload for a trace event."""
+
+    id: int
+    event_time: datetime
+    request_id: Optional[str]
+    thread_id: str
+    run_id: Optional[str]
+    message_id: Optional[int]
+    user_id: Optional[str]
+    event_type: str
+    event_name: str
+    trace_kind: str
+    phase: str
+    source: str
+    component: str
+    tool_name: Optional[str]
+    subagent_type: Optional[str]
+    ok: Optional[bool]
+    latency_ms: Optional[int]
+    error: Optional[str]
+    payload: Dict[str, Any]
+    seq: Optional[int]
+
+
+class TraceListResponse(BaseModel):
+    """Response payload for listing trace events."""
+
+    thread_id: Optional[str]
+    run_id: Optional[str]
+    limit: int
+    offset: int
+    traces: List[TraceEventResponse]

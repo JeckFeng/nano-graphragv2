@@ -33,6 +33,7 @@ from app.services.conversation_service import ConversationService
 from config.settings import get_settings
 from app.observability import log_event, set_ctx_ws, clear_ctx, set_message_id
 from app.observability.summarize import summarize_payload
+from app.api.routes_trace import router as trace_router
 
 router = APIRouter()
 v1_router = APIRouter(prefix="/v1")
@@ -614,3 +615,4 @@ async def ws_chat(websocket: WebSocket) -> None:
 
 
 router.include_router(v1_router)
+router.include_router(trace_router)

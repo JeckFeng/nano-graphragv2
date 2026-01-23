@@ -26,6 +26,7 @@ from dotenv import load_dotenv
 from core.tool_context import context_tool, wrap_runnable_with_tool_context
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
+from app.observability.trace_middleware import TraceMiddleware
 from core import LLMFactory, load_llm_config
 from Tools.gaode_map_tool import gaode_driving_route as _gaode_driving_route
 from deepagents.backends import CompositeBackend, StateBackend, FilesystemBackend
@@ -88,7 +89,8 @@ def create_map_agent() -> tuple:
         },
         checkpointer=checkpointer,
         backend=composite_backend,
-        system_prompt=MAP_WORKER_PROMPT
+        system_prompt=MAP_WORKER_PROMPT,
+        middleware=[TraceMiddleware()],
     )
 
     agent = wrap_runnable_with_tool_context(agent)

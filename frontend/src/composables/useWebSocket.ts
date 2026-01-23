@@ -1,6 +1,7 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { createWebSocket, sendMessage } from '@/api/websocket'
-import type { WsEvent } from '@/types'
+import { useTraceStore } from '@/stores'
+import type { TraceWsEvent, WsEvent } from '@/types'
 
 const MAX_RECONNECT_ATTEMPTS = 5
 const RECONNECT_DELAY = 3000
@@ -11,6 +12,8 @@ export function useWebSocket() {
   const streamingContent = ref('')
   const isStreaming = ref(false)
   const waitingResponse = ref(false)
+  const traceStore = useTraceStore()
+  const traceEnabled = String(import.meta.env.VITE_TRACE_PANEL_ENABLED).toLowerCase() === 'true'
   
   let reconnectAttempts = 0
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
@@ -44,18 +47,22 @@ export function useWebSocket() {
       currentUserId,
       currentThreadId,
       (event) => {
-        if (event.type === 'token') {
-          streamingContent.value += event.delta
+        if (traceEnabled && 'event_type' in event && event.event_type === 'trace') {
+          traceStore.appendTrace(event as TraceWsEvent)
+          return
+        }
+        if ('type' in event && event.type === 'token') {
+          streamingContent.value += (event as { delta: string }).delta
           isStreaming.value = true
           waitingResponse.value = false
-        } else if (event.type === 'final' || event.type === 'error' || event.type === 'approval_required') {
+        } else if ('type' in event && (event.type === 'final' || event.type === 'error' || event.type === 'approval_required')) {
           isStreaming.value = false
           waitingResponse.value = false
-          if (event.type === 'approval_required') {
-            streamingContent.value = ''
-          }
+          // approval_required 时不再清空 streamingContent，由 ChatPanel 处理
         }
-        currentOnEvent?.(event)
+        if ('type' in event) {
+          currentOnEvent?.(event as WsEvent)
+        }
       },
       () => {
         connected.value = true

@@ -73,6 +73,7 @@ class ObservabilityConfig:
     enabled_agent: bool
     enabled_tool: bool
     enabled_llm: bool
+    enabled_trace: bool
     capture_req_body: bool
     capture_resp_body: bool
     body_max_bytes: int
@@ -103,6 +104,7 @@ def get_obs_config() -> ObservabilityConfig:
         enabled_agent=_env_bool("OBS_ENABLED_AGENT", True),
         enabled_tool=_env_bool("OBS_ENABLED_TOOL", True),
         enabled_llm=_env_bool("OBS_ENABLED_LLM", True),
+        enabled_trace=_env_bool("OBS_ENABLED_TRACE", True),
         capture_req_body=_env_bool("OBS_CAPTURE_REQ_BODY", False),
         capture_resp_body=_env_bool("OBS_CAPTURE_RESP_BODY", False),
         body_max_bytes=_env_int("OBS_BODY_MAX_BYTES", 65536),

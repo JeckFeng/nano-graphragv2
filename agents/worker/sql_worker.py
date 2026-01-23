@@ -26,6 +26,7 @@ from deepagents import create_deep_agent
 from dotenv import load_dotenv
 from core.tool_context import context_tool, wrap_runnable_with_tool_context
 from langgraph.checkpoint.memory import MemorySaver
+from app.observability.trace_middleware import TraceMiddleware
 from core.prompts.worker.Prompts import SQL_WORKER_PROMPT
 
 # 加载环境变量
@@ -187,6 +188,7 @@ def create_sql_worker() -> tuple:
         ],
         checkpointer=checkpointer,
         system_prompt=SQL_WORKER_PROMPT,
+        middleware=[TraceMiddleware()],
     )
 
     agent = wrap_runnable_with_tool_context(agent)

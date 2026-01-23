@@ -1,6 +1,6 @@
-import type { WsEvent } from '@/types'
+import type { TraceWsEvent, WsEvent } from '@/types'
 
-export type WsMessageHandler = (event: WsEvent) => void
+export type WsMessageHandler = (event: WsEvent | TraceWsEvent) => void
 
 const normalizeWsBase = (apiBase?: string): string => {
   const base = apiBase?.trim()
@@ -39,7 +39,7 @@ export function createWebSocket(
   ws.onerror = (e) => onError?.(e)
   ws.onmessage = (e) => {
     try {
-      const data = JSON.parse(e.data) as WsEvent
+      const data = JSON.parse(e.data) as WsEvent | TraceWsEvent
       onMessage(data)
     } catch {
       console.error('Failed to parse WebSocket message:', e.data)

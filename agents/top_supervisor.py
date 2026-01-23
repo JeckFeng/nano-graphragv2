@@ -28,6 +28,7 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.store.memory import InMemoryStore
 from langgraph.types import Command
 
+from app.observability.trace_middleware import TraceMiddleware
 from config.settings import get_settings
 from core import LLMFactory, load_llm_config
 from core.tool_context import wrap_runnable_with_tool_context
@@ -125,6 +126,7 @@ def create_top_supervisor(checkpointer) -> tuple:
         checkpointer=checkpointer,
         backend=composite_backend,
         store=InMemoryStore(),
+        middleware=[TraceMiddleware()],
     )
 
     agent = wrap_runnable_with_tool_context(agent)

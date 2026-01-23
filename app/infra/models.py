@@ -6,7 +6,17 @@ import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, String, Text
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -153,3 +163,59 @@ class Artifact(Base):
     )
 
     message: Mapped[Message] = relationship("Message", back_populates="artifacts")
+
+
+class TraceEvent(Base):
+    """Trace event record for agent reasoning visualization.
+
+    Invariants:
+        - trace_kind is within the supported enum set.
+        - phase is within the supported enum set.
+        - thread_id references a valid conversation thread.
+    """
+
+    __tablename__ = "trace_events"
+    __table_args__ = (
+        CheckConstraint(
+            "trace_kind IN ('todo_update','tool_span','subagent_dispatch','hitl_interrupt','hitl_resume')",
+            name="trace_events_kind_chk",
+        ),
+        CheckConstraint(
+            "phase IN ('start','end','update','error','pending','resume')",
+            name="trace_events_phase_chk",
+        ),
+        Index("trace_events_thread_time_idx", "thread_id", "event_time"),
+        Index("trace_events_run_seq_idx", "run_id", "seq"),
+        Index("trace_events_user_time_idx", "user_id", "event_time"),
+        {"schema": BUSINESS_SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    event_time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        nullable=False,
+    )
+
+    request_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    thread_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    run_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    message_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    user_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+
+    event_type: Mapped[str] = mapped_column(String(32), default="trace", nullable=False)
+    event_name: Mapped[str] = mapped_column(String(64), default="trace_event", nullable=False)
+    trace_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    phase: Mapped[str] = mapped_column(String(16), nullable=False)
+
+    source: Mapped[str] = mapped_column(String(32), default="backend", nullable=False)
+    component: Mapped[str] = mapped_column(String(32), default="agent", nullable=False)
+
+    tool_name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    subagent_type: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    ok: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    latency_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    payload: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    seq: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)

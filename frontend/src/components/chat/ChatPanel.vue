@@ -6,6 +6,7 @@ import { useUserStore, useMessageStore } from '@/stores'
 import type { Message, WsEvent } from '@/types'
 import MessageList from './MessageList.vue'
 import ChatInput from './ChatInput.vue'
+import TracePanel from '@/components/trace/TracePanel.vue'
 
 const props = defineProps<{
   threadId: string
@@ -18,6 +19,7 @@ const emit = defineEmits<{
 const userStore = useUserStore()
 const messageStore = useMessageStore()
 const message = useMessage()
+const traceEnabled = String(import.meta.env.VITE_TRACE_PANEL_ENABLED).toLowerCase() === 'true'
 
 const {
   connected,
@@ -45,8 +47,18 @@ const handleWsEvent = (event: WsEvent) => {
     message.error(event.message || '发生错误')
     clearStreaming()
   } else if (event.type === 'approval_required') {
+    // 保存审批前的流式内容为消息（如果有）
+    if (streamingContent.value) {
+      const partialMessage: Message = {
+        id: Date.now(),
+        role: 'assistant',
+        content: streamingContent.value,
+        created_at: new Date().toISOString(),
+      }
+      messageStore.addMessage(partialMessage)
+      clearStreaming()
+    }
     message.warning('需要人工审核')
-    clearStreaming()
     emit('approval-required', event.approval_id)
   }
 }
@@ -106,6 +118,8 @@ watch(
       :is-streaming="isStreaming"
       :loading="messageStore.loading"
     />
+
+    <TracePanel v-if="traceEnabled" :thread-id="threadId" />
     
     <!-- 输入框 -->
     <ChatInput

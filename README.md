@@ -1078,3 +1078,15 @@ python tests/api_tests/test_api_conversation_flow.py --base-url http://localhost
 - `NANO_GRAPHRAG_API_URL`：默认 `http://localhost:8000`
 - `NANO_GRAPHRAG_USER_ID`：默认 `api-test-user`
 - `--timeout`：控制 HTTP 请求与 WebSocket 等待/心跳超时（默认 120 秒）
+
+### Trace 日志一致性校验（可用于 CI）
+
+脚本路径：`scripts/validate_trace_consistency.py`
+
+```bash
+python scripts/validate_trace_consistency.py --date 20260122
+```
+
+说明：
+- `--date` 为 UTC 日期（YYYYMMDD），默认当天。
+- 可在 CI 中加入该脚本，用于对 `Logs/agent/agent_YYYYMMDD.jsonl` 与数据库 `trace_events` 进行一致性校验。
