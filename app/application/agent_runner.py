@@ -459,14 +459,20 @@ class TopSupervisorRunner(AgentRunner):
             return
 
         from app.infra.db import ASYNC_SESSION_FACTORY
+        from app.observability import get_ctx
         from app.services.message_service import MessageService
 
         async with ASYNC_SESSION_FACTORY() as session:
             message_service = MessageService(session)
+            ctx = get_ctx()
+            if ctx.get("message_id"):
+                return
+            run_id = ctx.get("run_id")
             await message_service.append_message(
                 thread_id=uuid.UUID(thread_id),
                 role="assistant",
                 content=content,
+                run_id=run_id,
                 tool_payload={"partial": True, "reason": "approval_interrupt"},
             )
 

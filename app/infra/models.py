@@ -113,6 +113,7 @@ class Message(Base):
         ForeignKey(f"{BUSINESS_SCHEMA}.threads.id"),
         nullable=False,
     )
+    run_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     role: Mapped[str] = mapped_column(String(32), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     tool_payload: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)

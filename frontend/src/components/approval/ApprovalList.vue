@@ -14,6 +14,24 @@ const emit = defineEmits<{
 const getToolName = (approval: ApprovalRecord) => {
   return approval.interrupts[0]?.action_requests[0]?.name || '未知工具'
 }
+
+const truncateLabel = (value: string, maxLength = 16) => {
+  if (value.length <= maxLength) return value
+  return `${value.slice(0, maxLength)}…`
+}
+
+const formatCreatedAt = (value: string) => {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
+}
 </script>
 
 <template>
@@ -29,8 +47,10 @@ const getToolName = (approval: ApprovalRecord) => {
       >
         <div class="flex items-center justify-between">
           <div>
-            <div class="font-medium">{{ getToolName(item) }}</div>
-            <div class="text-xs text-muted mt-1">{{ item.created_at }}</div>
+            <div class="font-medium max-w-[140px] truncate">
+              {{ truncateLabel(getToolName(item)) }}
+            </div>
+            <div class="text-xs text-muted mt-1">{{ formatCreatedAt(item.created_at) }}</div>
           </div>
           <NTag size="small" :type="item.status === 'pending' ? 'warning' : 'success'">
             {{ item.status }}

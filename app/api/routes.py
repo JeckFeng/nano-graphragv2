@@ -166,6 +166,8 @@ async def list_messages(
             id=message.id,
             role=message.role,
             content=message.content,
+            run_id=message.run_id,
+            tool_payload=message.tool_payload,
             created_at=message.created_at,
         )
         for message in messages
@@ -361,6 +363,7 @@ def build_ws_payload(
         "type": event.get("type", "final"),
         "thread_id": thread_id,
         "message_id": event.get("message_id"),
+        "run_id": event.get("run_id"),
         "sequence": sequence,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }

@@ -5,20 +5,34 @@ import { useTraceStore } from '@/stores'
 import type { TraceEvent } from '@/types'
 
 const props = defineProps<{
-  threadId: string
+  runId: string
+  defaultCollapsed?: boolean
+  cutOnInterrupt?: boolean
 }>()
 
 const traceStore = useTraceStore()
-const collapsed = ref(false)
+const collapsed = ref(props.defaultCollapsed ?? false)
 const viewMode = ref<'timeline' | 'card'>('timeline')
 
 const tracesSorted = computed(() => {
-  return [...traceStore.traces]
-    .filter((trace) => trace.thread_id === props.threadId)
+  const ordered = [...traceStore.traces]
+    .filter((trace) => trace.run_id === props.runId)
     .sort(
       (a, b) =>
         new Date(a.event_time).getTime() - new Date(b.event_time).getTime()
     )
+
+  if (props.cutOnInterrupt === false) {
+    return ordered
+  }
+
+  const interruptIndex = ordered.findIndex(
+    (trace) => trace.trace_kind === 'hitl_interrupt'
+  )
+  if (interruptIndex >= 0) {
+    return ordered.slice(0, interruptIndex + 1)
+  }
+  return ordered
 })
 
 const toggleCollapse = () => {

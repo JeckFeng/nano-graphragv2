@@ -9,6 +9,8 @@ export interface Message {
   role: 'user' | 'assistant' | 'tool'
   content: string
   created_at: string
+  run_id?: string | null
+  tool_payload?: Record<string, unknown> | null
   artifacts?: RouteArtifact[]
 }
 
@@ -60,6 +62,7 @@ export interface WsEventBase {
   type: WsEventType
   thread_id: string
   message_id?: number
+  run_id?: string | null
   sequence?: number
   timestamp?: string
 }

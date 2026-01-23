@@ -41,6 +41,8 @@ class MessageResponse(BaseModel):
     id: int
     role: str
     content: str
+    run_id: Optional[str]
+    tool_payload: Optional[dict]
     created_at: datetime
 
 

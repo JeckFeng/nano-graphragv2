@@ -31,6 +31,7 @@ class MessageService:
         thread_id: uuid.UUID,
         role: str,
         content: str,
+        run_id: Optional[str] = None,
         tool_payload: Optional[dict] = None,
     ) -> Message:
         """Append a new message to a thread.
@@ -46,6 +47,7 @@ class MessageService:
         """
         message = Message(
             thread_id=thread_id,
+            run_id=run_id,
             role=role,
             content=content,
             tool_payload=tool_payload,

@@ -318,7 +318,7 @@ class ApprovalService:
             user_id: External user identifier.
         """
         from app.application.agent_runner import TopSupervisorRunner
-        from app.observability import clear_ctx, set_ctx_ws, set_message_id, set_run_id
+        from app.observability import clear_ctx, get_ctx, set_ctx_ws, set_message_id, set_run_id
         from app.services.ws_manager import ws_manager
 
         thread_id = record.thread_id
@@ -333,6 +333,7 @@ class ApprovalService:
         )
         set_message_id(None)
         set_run_id(uuid.uuid4().hex)
+        run_id = get_ctx().get("run_id")
 
         try:
             config = {"configurable": {"thread_id": thread_id}}
@@ -361,6 +362,8 @@ class ApprovalService:
                         sequence += 1
                         mapped["sequence"] = sequence
                         mapped["thread_id"] = thread_id
+                        if run_id:
+                            mapped["run_id"] = run_id
 
                         delta = mapped.get("delta", "")
                         if delta:
@@ -382,6 +385,7 @@ class ApprovalService:
                 await ws_manager.send_to_thread(thread_id, {
                     "type": "final",
                     "thread_id": thread_id,
+                    "run_id": run_id,
                     "content": content,
                     "sequence": sequence,
                     "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -457,14 +461,17 @@ class ApprovalService:
         from uuid import UUID
 
         from app.infra.db import ASYNC_SESSION_FACTORY
+        from app.observability import get_ctx
         from app.services.message_service import MessageService
 
         async with ASYNC_SESSION_FACTORY() as session:
             message_service = MessageService(session)
+            run_id = get_ctx().get("run_id")
             await message_service.append_message(
                 UUID(thread_id),
                 "assistant",
                 content,
+                run_id=run_id,
             )
 
     @staticmethod

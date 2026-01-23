@@ -12,6 +12,7 @@ export function useWebSocket() {
   const streamingContent = ref('')
   const isStreaming = ref(false)
   const waitingResponse = ref(false)
+  const streamingRunId = ref<string | null>(null)
   const traceStore = useTraceStore()
   const traceEnabled = String(import.meta.env.VITE_TRACE_PANEL_ENABLED).toLowerCase() === 'true'
   
@@ -53,11 +54,17 @@ export function useWebSocket() {
         }
         if ('type' in event && event.type === 'token') {
           streamingContent.value += (event as { delta: string }).delta
+          if (event.run_id) {
+            streamingRunId.value = event.run_id
+          }
           isStreaming.value = true
           waitingResponse.value = false
         } else if ('type' in event && (event.type === 'final' || event.type === 'error' || event.type === 'approval_required')) {
           isStreaming.value = false
           waitingResponse.value = false
+          if (event.type === 'final' || event.type === 'error') {
+            streamingRunId.value = null
+          }
           // approval_required 时不再清空 streamingContent，由 ChatPanel 处理
         }
         if ('type' in event) {
@@ -95,6 +102,7 @@ export function useWebSocket() {
       return false
     }
     streamingContent.value = ''
+    streamingRunId.value = null
     waitingResponse.value = true
     return sendMessage(ws.value, content)
   }
@@ -110,6 +118,7 @@ export function useWebSocket() {
     isStreaming.value = false
     waitingResponse.value = false
     streamingContent.value = ''
+    streamingRunId.value = null
     currentThreadId = ''
   }
 
@@ -131,6 +140,7 @@ export function useWebSocket() {
     streamingContent,
     isStreaming,
     waitingResponse,
+    streamingRunId,
     connect,
     send,
     disconnect,

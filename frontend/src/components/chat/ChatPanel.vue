@@ -6,7 +6,6 @@ import { useUserStore, useMessageStore } from '@/stores'
 import type { Message, WsEvent } from '@/types'
 import MessageList from './MessageList.vue'
 import ChatInput from './ChatInput.vue'
-import TracePanel from '@/components/trace/TracePanel.vue'
 
 const props = defineProps<{
   threadId: string
@@ -19,13 +18,13 @@ const emit = defineEmits<{
 const userStore = useUserStore()
 const messageStore = useMessageStore()
 const message = useMessage()
-const traceEnabled = String(import.meta.env.VITE_TRACE_PANEL_ENABLED).toLowerCase() === 'true'
 
 const {
   connected,
   streamingContent,
   isStreaming,
   waitingResponse,
+  streamingRunId,
   connect,
   send,
   disconnect,
@@ -39,6 +38,7 @@ const handleWsEvent = (event: WsEvent) => {
       id: event.message_id || Date.now(),
       role: 'assistant',
       content: event.content,
+      run_id: event.run_id || null,
       created_at: event.timestamp || new Date().toISOString(),
     }
     messageStore.addMessage(newMessage)
@@ -53,10 +53,13 @@ const handleWsEvent = (event: WsEvent) => {
         id: Date.now(),
         role: 'assistant',
         content: streamingContent.value,
+        run_id: streamingRunId.value,
+        tool_payload: { partial: true, reason: 'approval_interrupt' },
         created_at: new Date().toISOString(),
       }
       messageStore.addMessage(partialMessage)
       clearStreaming()
+      streamingRunId.value = null
     }
     message.warning('需要人工审核')
     emit('approval-required', event.approval_id)
@@ -116,10 +119,9 @@ watch(
       :messages="messageStore.messages"
       :streaming-content="streamingContent"
       :is-streaming="isStreaming"
+      :streaming-run-id="streamingRunId"
       :loading="messageStore.loading"
     />
-
-    <TracePanel v-if="traceEnabled" :thread-id="threadId" />
     
     <!-- 输入框 -->
     <ChatInput
