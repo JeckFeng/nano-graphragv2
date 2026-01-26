@@ -19,17 +19,18 @@ const userStore = useUserStore()
 const messageStore = useMessageStore()
 const message = useMessage()
 
-const {
-  connected,
-  streamingContent,
-  isStreaming,
-  waitingResponse,
-  streamingRunId,
-  connect,
-  send,
-  disconnect,
-  clearStreaming,
-} = useWebSocket()
+  const {
+    connected,
+    streamingContent,
+    isStreaming,
+    waitingResponse,
+    streamingRunId,
+    traceActiveRunId,
+    connect,
+    send,
+    disconnect,
+    clearStreaming,
+  } = useWebSocket()
 
 // 处理 WebSocket 事件
 const handleWsEvent = (event: WsEvent) => {
@@ -120,6 +121,7 @@ watch(
       :streaming-content="streamingContent"
       :is-streaming="isStreaming"
       :streaming-run-id="streamingRunId"
+      :trace-active-run-id="traceActiveRunId"
       :loading="messageStore.loading"
     />
     

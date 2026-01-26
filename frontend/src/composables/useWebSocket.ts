@@ -13,9 +13,17 @@ export function useWebSocket() {
   const isStreaming = ref(false)
   const waitingResponse = ref(false)
   const streamingRunId = ref<string | null>(null)
+  const traceActiveRunId = ref<string | null>(null)
   const traceStore = useTraceStore()
   const traceEnabled = String(import.meta.env.VITE_TRACE_PANEL_ENABLED).toLowerCase() === 'true'
+  const traceQueueDebug = String(import.meta.env.VITE_TRACE_QUEUE_DEBUG).toLowerCase() === 'true'
   
+  const traceQueue: TraceWsEvent[] = []
+  let flushingTraceQueue = false
+  let lastFlushAt: number | null = null
+  const TRACE_QUEUE_PER_TICK = 2
+  const TRACE_QUEUE_INTERVAL_MS = 1000
+
   let reconnectAttempts = 0
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
   let currentUserId = ''
@@ -49,7 +57,11 @@ export function useWebSocket() {
       currentThreadId,
       (event) => {
         if (traceEnabled && 'event_type' in event && event.event_type === 'trace') {
-          traceStore.appendTrace(event as TraceWsEvent)
+          enqueueTraceEvent(event as TraceWsEvent)
+          const runId = (event as TraceWsEvent).run_id
+          if (runId) {
+            traceActiveRunId.value = runId
+          }
           return
         }
         if ('type' in event && event.type === 'token') {
@@ -64,6 +76,7 @@ export function useWebSocket() {
           waitingResponse.value = false
           if (event.type === 'final' || event.type === 'error') {
             streamingRunId.value = null
+            traceActiveRunId.value = null
           }
           // approval_required 时不再清空 streamingContent，由 ChatPanel 处理
         }
@@ -103,6 +116,7 @@ export function useWebSocket() {
     }
     streamingContent.value = ''
     streamingRunId.value = null
+    traceActiveRunId.value = null
     waitingResponse.value = true
     return sendMessage(ws.value, content)
   }
@@ -119,11 +133,54 @@ export function useWebSocket() {
     waitingResponse.value = false
     streamingContent.value = ''
     streamingRunId.value = null
+    traceActiveRunId.value = null
     currentThreadId = ''
   }
 
   const clearStreaming = () => {
     streamingContent.value = ''
+  }
+
+  const enqueueTraceEvent = (event: TraceWsEvent) => {
+    traceQueue.push(event)
+    if (traceQueueDebug) {
+      console.debug('[trace-queue] enqueue', {
+        trace_kind: event.trace_kind,
+        run_id: event.run_id,
+        queue_length: traceQueue.length,
+        ts: event.ts,
+      })
+    }
+    if (!flushingTraceQueue) {
+      flushingTraceQueue = true
+      setTimeout(flushTraceQueue, TRACE_QUEUE_INTERVAL_MS)
+    }
+  }
+
+  const flushTraceQueue = () => {
+    let flushed = 0
+    while (flushed < TRACE_QUEUE_PER_TICK && traceQueue.length > 0) {
+      const next = traceQueue.shift()
+      if (!next) break
+      traceStore.appendTrace(next)
+      flushed += 1
+    }
+    if (traceQueueDebug) {
+      const now = performance.now()
+      const delta = lastFlushAt ? Math.round(now - lastFlushAt) : null
+      lastFlushAt = now
+      console.debug('[trace-queue] flush', {
+        flushed,
+        remaining: traceQueue.length,
+        tick_delta_ms: delta,
+      })
+    }
+    if (traceQueue.length > 0) {
+      setTimeout(flushTraceQueue, TRACE_QUEUE_INTERVAL_MS)
+    } else {
+      flushingTraceQueue = false
+      lastFlushAt = null
+    }
   }
 
   onMounted(() => {
@@ -141,6 +198,7 @@ export function useWebSocket() {
     isStreaming,
     waitingResponse,
     streamingRunId,
+    traceActiveRunId,
     connect,
     send,
     disconnect,
