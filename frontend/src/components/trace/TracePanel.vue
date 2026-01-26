@@ -69,6 +69,15 @@ const formatTime = (value: string) => {
   return date.toLocaleTimeString('zh-CN', { hour12: false })
 }
 
+const formatToolResult = (value: unknown) => {
+  if (typeof value === 'string') return value
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
+  }
+}
+
 const buildSummary = (trace: TraceEvent) => {
   if (trace.trace_kind === 'todo_update') {
     const todos = (trace.payload as { todos?: unknown[] })?.todos
@@ -163,6 +172,16 @@ const buildSummary = (trace: TraceEvent) => {
               </span>
               <span class="text-sm text-base">{{ todo.content || '（无内容）' }}</span>
             </div>
+          </div>
+
+          <div
+            v-if="trace.trace_kind === 'tool_span' && (trace.payload as { tool_result?: unknown })?.tool_result !== undefined"
+            class="mt-2"
+          >
+            <div class="text-xs text-muted mb-1">
+              工具返回结果<span v-if="trace.tool_name">（{{ trace.tool_name }}）</span>
+            </div>
+            <pre class="bg-base p-2 rounded text-xs overflow-auto whitespace-pre-wrap">{{ formatToolResult((trace.payload as { tool_result?: unknown }).tool_result) }}</pre>
           </div>
         </div>
       </div>

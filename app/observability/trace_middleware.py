@@ -70,6 +70,47 @@ def _extract_result_payload(result: ToolMessage | Command) -> Any:
     return result
 
 
+def normalize_tool_result(value: Any) -> Any:
+    """Normalize tool results before persistence.
+
+    This function is a placeholder for future enhancements such as truncation,
+    allowlist filtering, or redaction. The current implementation focuses on
+    JSON-serializable normalization only, preserving raw content as much as
+    possible for experiments.
+
+    Args:
+        value: Raw tool output payload.
+
+    Returns:
+        Any: JSON-serializable payload.
+    """
+    if isinstance(value, ToolMessage):
+        return {
+            "name": value.name,
+            "content": value.content,
+            "tool_call_id": value.tool_call_id,
+            "id": value.id,
+        }
+    if isinstance(value, Command):
+        return normalize_tool_result(value.update or {})
+    if isinstance(value, dict):
+        return {key: normalize_tool_result(val) for key, val in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [normalize_tool_result(item) for item in value]
+    if hasattr(value, "model_dump"):
+        return normalize_tool_result(value.model_dump())
+    if hasattr(value, "dict"):
+        try:
+            return normalize_tool_result(value.dict())
+        except Exception:
+            pass
+    try:
+        json.dumps(value, ensure_ascii=False)
+        return value
+    except TypeError:
+        return str(value)
+
+
 def _ensure_ctx_from_runtime(request: ToolCallRequest) -> None:
     """Fill missing context fields from the tool runtime when available.
 
@@ -191,6 +232,7 @@ class TraceMiddleware(AgentMiddleware):
         latency_ms = int((time.perf_counter() - start) * 1000)
         result_payload = _extract_result_payload(result)
         result_summary = _summarize_value(result_payload)
+        normalized_result = normalize_tool_result(result_payload)
 
         await trace_publish(
             build_trace_event(
@@ -199,6 +241,7 @@ class TraceMiddleware(AgentMiddleware):
                 payload={
                     "args_summary": args_summary,
                     "result_summary": result_summary,
+                    "tool_result": normalized_result,
                 },
                 component="tool",
                 tool_name=tool_name,
