@@ -44,18 +44,6 @@ watch(() => props.streamingContent, scrollToBottom)
 <template>
   <div ref="containerRef" class="flex-1 overflow-y-auto p-4">
     <NSpin :show="loading">
-      <div v-if="showStandaloneTrace" class="mb-4">
-        <div class="mb-2 flex items-center justify-between rounded border border-base bg-panel px-3 py-2 text-sm">
-          <span class="font-medium">正在思考…</span>
-          <span class="rounded-full bg-blue-100 px-2 py-0.5 text-xs text-blue-700">进行中</span>
-        </div>
-        <TracePanel
-          :run-id="traceActiveRunId!"
-          :default-collapsed="false"
-          :cut-on-interrupt="false"
-        />
-      </div>
-
       <div v-if="messages.length === 0 && !isStreaming" class="text-center text-muted py-8">
         开始对话吧
       </div>
@@ -94,6 +82,18 @@ watch(() => props.streamingContent, scrollToBottom)
               created_at: new Date().toISOString()
             }"
             :is-streaming="true"
+          />
+        </div>
+
+        <div v-if="showStandaloneTrace" class="mb-4">
+          <div class="mb-2 flex items-center justify-between rounded border border-base bg-panel px-3 py-2 text-sm">
+            <span class="font-medium">正在思考…</span>
+            <span class="rounded-full bg-blue-100 px-2 py-0.5 text-xs text-blue-700">进行中</span>
+          </div>
+          <TracePanel
+            :run-id="traceActiveRunId!"
+            :default-collapsed="false"
+            :cut-on-interrupt="false"
           />
         </div>
       </template>

@@ -158,6 +158,13 @@ const buildSummary = (trace: TraceEvent) => {
             {{ trace.error }}
           </div>
 
+          <div
+            v-if="trace.trace_kind === 'tool_span' && trace.phase === 'start'"
+            class="mt-1 text-xs text-blue-600"
+          >
+            工具执行中...
+          </div>
+
           <div v-if="trace.trace_kind === 'todo_update' && getTodoItems(trace).length" class="mt-2 space-y-1 text-xs">
             <div
               v-for="(todo, idx) in getTodoItems(trace)"
@@ -175,7 +182,7 @@ const buildSummary = (trace: TraceEvent) => {
           </div>
 
           <div
-            v-if="trace.trace_kind === 'tool_span' && (trace.payload as { tool_result?: unknown })?.tool_result !== undefined"
+            v-if="trace.trace_kind === 'tool_span' && trace.phase === 'end' && (trace.payload as { tool_result?: unknown })?.tool_result !== undefined"
             class="mt-2"
           >
             <div class="text-xs text-muted mb-1">

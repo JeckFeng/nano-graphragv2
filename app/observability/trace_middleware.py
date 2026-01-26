@@ -187,6 +187,19 @@ class TraceMiddleware(AgentMiddleware):
         if tool_name == "task" and isinstance(args, dict):
             subagent_type = str(args.get("subagent_type") or "")
             task_summary = str(args.get("description") or "")
+            if subagent_type or task_summary:
+                await trace_publish(
+                    build_trace_event(
+                        trace_kind="supervisor_route",
+                        phase="start",
+                        payload={
+                            "selected_team": subagent_type,
+                            "task_summary": task_summary,
+                        },
+                        component="agent",
+                        subagent_type=subagent_type or None,
+                    )
+                )
             await trace_publish(
                 build_trace_event(
                     trace_kind="subagent_dispatch",

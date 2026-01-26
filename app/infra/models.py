@@ -178,7 +178,8 @@ class TraceEvent(Base):
     __tablename__ = "trace_events"
     __table_args__ = (
         CheckConstraint(
-            "trace_kind IN ('todo_update','tool_span','subagent_dispatch','hitl_interrupt','hitl_resume')",
+            "trace_kind IN ('todo_update','tool_span','subagent_dispatch','hitl_interrupt','hitl_resume',"
+            "'agent_run_start','supervisor_route')",
             name="trace_events_kind_chk",
         ),
         CheckConstraint(

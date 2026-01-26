@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS {schema}.trace_events (
   payload JSONB NOT NULL DEFAULT '{{}}'::jsonb,
   seq INTEGER,
   CONSTRAINT trace_events_kind_chk
-    CHECK (trace_kind IN ('todo_update','tool_span','subagent_dispatch','hitl_interrupt','hitl_resume')),
+    CHECK (trace_kind IN ('todo_update','tool_span','subagent_dispatch','hitl_interrupt','hitl_resume','agent_run_start','supervisor_route')),
   CONSTRAINT trace_events_phase_chk
     CHECK (phase IN ('start','end','update','error','pending','resume'))
 );
@@ -50,6 +50,13 @@ TRACE_EVENTS_INDEXES = [
     "CREATE INDEX IF NOT EXISTS trace_events_user_time_idx "
     "ON {schema}.trace_events (user_id, event_time);",
 ]
+
+TRACE_EVENTS_KIND_CONSTRAINT = (
+    "ALTER TABLE {schema}.trace_events DROP CONSTRAINT IF EXISTS trace_events_kind_chk;",
+    "ALTER TABLE {schema}.trace_events ADD CONSTRAINT trace_events_kind_chk "
+    "CHECK (trace_kind IN ('todo_update','tool_span','subagent_dispatch','hitl_interrupt',"
+    "'hitl_resume','agent_run_start','supervisor_route'));",
+)
 
 
 def _build_db_url(db_name: str) -> str:
@@ -81,6 +88,8 @@ async def _run(db_name: str, schema: str) -> None:
     async with engine.begin() as conn:
         await conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema}"))
         await conn.execute(text(TRACE_EVENTS_DDL.format(schema=schema)))
+        for stmt in TRACE_EVENTS_KIND_CONSTRAINT:
+            await conn.execute(text(stmt.format(schema=schema)))
         for stmt in TRACE_EVENTS_INDEXES:
             await conn.execute(text(stmt.format(schema=schema)))
     await engine.dispose()

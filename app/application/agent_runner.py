@@ -93,6 +93,14 @@ class TopSupervisorRunner(AgentRunner):
                 "ok": True,
             },
         )
+        await trace_publish(
+            build_trace_event(
+                trace_kind="agent_run_start",
+                phase="start",
+                payload={"user_message": user_content},
+                component="agent",
+            )
+        )
         try:
             config = {"configurable": {"thread_id": thread_id}}
             async with AsyncPostgresSaver.from_conn_string(self._db_uri) as checkpointer:
